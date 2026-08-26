@@ -238,7 +238,7 @@ export function BrickTreeApp() {
   const focusNode = useMemo(() => {
     const requested = focusedNodeId ?? selectedNodeId;
     const requestedNode = requested ? nodes.find((node) => node.id === requested) : undefined;
-    if (mode === "brick" && requestedNode?.id === rootNode?.id && requestedNode.title === "Your Foundations") return undefined;
+    if (mode === "brick" && requestedNode && requestedNode.id === rootNode?.id && requestedNode.title === "Your Foundations") return undefined;
     return requestedNode ?? (mode === "tree" ? rootNode : undefined);
   }, [focusedNodeId, selectedNodeId, nodes, mode, rootNode]);
 
