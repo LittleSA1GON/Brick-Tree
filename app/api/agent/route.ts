@@ -1,6 +1,6 @@
 import { AgentRequestSchema } from "@/lib/schemas/api";
 import { branchFromConcept, discoverLearningPath, explainConcept, findResources, navigateTree } from "@/lib/agents/orchestrator";
-import { LLMConfigurationError } from "@/lib/llm/provider";
+import { LLMConfigurationError, LLMResponseError } from "@/lib/llm/provider";
 import { assertSameOrigin, requestBodyTooLarge } from "@/lib/utils/request";
 
 export const runtime = "nodejs";
@@ -107,8 +107,12 @@ export async function POST(request: Request) {
         503,
       );
     }
+    if (error instanceof LLMResponseError) {
+      const status = error.status === 429 ? 429 : error.status && error.status >= 400 && error.status < 600 ? error.status : 503;
+      const code = error.kind === "rate_limit" ? "provider_rate_limited" : "provider_failed";
+      return errorResponse(code, error.message.slice(0, 900), status);
+    }
     const message = error instanceof Error ? error.message : "Unknown agent error.";
-    const status = message.toLowerCase().includes("rate") ? 429 : 500;
-    return errorResponse("agent_failed", message.slice(0, 900), status);
+    return errorResponse("agent_failed", message.slice(0, 900), 500);
   }
 }

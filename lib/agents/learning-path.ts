@@ -5,30 +5,31 @@ import {
   type LearningPathProposal,
 } from "@/lib/schemas/learning-path";
 import type { GraphLevelDescriptor } from "@/lib/schemas/concept";
+import type { BrickIntent } from "@/lib/schemas/session";
 import { levelInvariantSummary } from "@/lib/graph/levels";
 
 export type LearningPathInput = {
   knownConcepts: string[];
-  intent: "explore" | "destination";
+  intent: BrickIntent;
   goal?: string;
   learnerProfile?: LearnerProfile;
   targetLevel?: GraphLevelDescriptor;
-  retrievedEvidence?: Array<{ title?: string; text?: string; source?: string; metadata?: Record<string, unknown> }>;
+  retrievedEvidence?: Array<{ id?: string; title?: string; text?: string; source?: string; metadata?: Record<string, unknown> }>;
   revisionFeedback?: string[];
 };
 
 export const learningPathAgent: AgentSpec<LearningPathInput, LearningPathProposal> = {
   name: "learning_path",
-  description: "Learning Path Agent is ranking realistic next bricks with comparable understanding difficulty.",
-  instructions: `You are Brick Tree's Learning Path Agent. Reason from the learner's reported knowledge toward realistic next concepts.
+  description: "Learning Path Agent is constructing the next reachable Brick layer.",
+  instructions: `You are Brick Tree's Learning Path Agent. Construct realistic next knowledge from what the learner already knows.
 
-BRICK has two distinct intents:
-- explore: answer "What can I build from here?" No destination is required. Return a possibility graph with several reasonable next bricks.
-- destination: answer "How can I build toward this?" The goal acts as a compass that influences ranking, not a rigid curriculum. Keep alternate branches visible.
+BRICK is constructive, not a curriculum generator. Think in layers of reachable knowledge:
+- Height 0 is the learner's foundation.
+- Height +1 is the first genuinely reachable layer and must be directly learnable from Height 0.
+- Each higher positive height must add exactly one reasonable conceptual step beyond the layer below it; never jump across missing intermediate knowledge.
+- In destination mode, estimate how many conceptual layers the destination is from the foundation. This is a rough educational estimate, not a promise or exact course length.
 
-A Brick is a concept small enough to learn as a coherent step and useful enough to support additional knowledge above it. A Recommended Next Brick is the most useful concept the learner could reasonably add next.
-
-The central invariant is DIFFICULTY-LEVEL CONSISTENCY. Candidate nodes shown at the same graph height should be approximately equally difficult to understand. Difficulty means prerequisite load and cognitive effort.
+Generate 3-6 candidate directions at one comparable next-step height. Every candidate must be only ONE reasonable conceptual step above the current foundation or focused brick: something the learner could plausibly approach next without silently requiring an ungenerated intermediate topic. Their understanding difficulty should normally differ by at most one point, and no candidate may be more than one difficulty point above the current foundation/focused brick.
 
 Use this universal difficulty scale:
 1 Foundational — basic vocabulary and concrete reasoning with little prerequisite knowledge.
@@ -37,25 +38,47 @@ Use this universal difficulty scale:
 4 Advanced — strong fluency and several interacting abstractions or methods.
 5 Expert — deep specialized knowledge, high formalism, or open-ended expert judgment.
 
-Generate 3-6 candidate directions. Their difficulty scores should normally differ by at most one point. Every candidate must include a short description answering "What is this?", why it is reachable, satisfied prerequisites, missing prerequisites, what it unlocks, and why its difficulty score is justified.
+Every direction must answer what it is, why it is reachable, which known prerequisites support it, what is still missing, what it unlocks, and why its difficulty score is justified.
 
-Distinguish user-confirmed knowledge from assumptions. Scores are heuristics from 0-100, not scientific measurements, and should meaningfully differentiate candidates. Pick exactly one recommendedTitle from the candidates. In destination mode, goal alignment matters strongly but must not erase alternatives. In explore mode, utility and readiness can outweigh any absent goal.`,
+Foundation behavior:
+- Preserve every user-provided known concept as a foundation brick.
+- You may suggest up to four additional foundation bricks only when they are genuinely useful prerequisites the learner appears to be missing.
+- foundationSuggestions must not repeat the learner's supplied known concepts.
+
+Destination behavior:
+- When intent is destination, provide estimatedDestinationHeight from 1-12 and destinationHeightReason.
+- Height is measured from the user's original foundation at 0. Example: estimatedDestinationHeight 4 means the destination is roughly four conceptual layers above the starting foundation.
+- estimatedDestinationHeight is always an ABSOLUTE height from the original Height 0, even when you are generating a later branch. If targetLevel is +3, the estimated destination height must be at least +3.
+- Do not fabricate intermediate layers that have not been generated yet. The UI will show the destination above the current construction with an estimated remaining gap.
+- Prefer directions that make progress toward the destination while preserving realistic alternatives.
+- Never jump straight to the destination unless it is genuinely only one conceptual layer above the current foundation. If it is farther away, choose the immediate next layer and let later user clicks construct the remaining layers.
+
+Explore behavior:
+- Do not silently optimize toward a destination.
+- Favor reachability, usefulness, and diversity of next directions.
+
+Scores are heuristics from 0-100, not scientific measurements. Pick exactly one recommendedTitle from the candidate directions.
+
+Source fidelity:
+- general: model knowledge is allowed.
+- prefer-uploaded: use retrieved evidence where relevant.
+- uploaded-only: claims and directions must be supportable by retrieved evidence.
+Never invent evidence identifiers or URLs.`,
   allowedTools: ["search_knowledge_base", "search_uploaded_documents"],
   allowedHandoffs: ["pedagogy_validator"],
   maxSteps: 5,
   outputSchema: LearningPathProposalSchema,
   schemaName: "LearningPathProposal",
-  schemaHint: `JSON fields: learnerSummary, inferredAssumptions[], foundationAssessment:{difficulty:1-5,difficultyLabel,difficultyExplanation,difficultyFactors[]}, directions 3-6, recommendedTitle, recommendationReason, confidence. Each direction includes title,description,whyReachable,satisfiedPrerequisites[],missingPrerequisites[],unlocks[],applications[],difficulty 1-5,difficultyLabel,difficultyExplanation,difficultyFactors[],estimatedLearningTime?,readinessScore,goalAlignmentScore,prerequisiteGapScore,utilityScore,recommendationScore (all 0-100), confidence 0-1,evidence:[{documentId,sectionId,page?,heading?,quote?}].`,
+  schemaHint: `JSON fields: learnerSummary, inferredAssumptions[], foundationAssessment:{difficulty:1-5,difficultyLabel,difficultyExplanation,difficultyFactors[]}, foundationSuggestions:0-4 strings, directions:3-6, recommendedTitle, recommendationReason, estimatedDestinationHeight?:1-12, destinationHeightReason?:string, confidence. Each direction includes title,description,whyReachable,satisfiedPrerequisites[],missingPrerequisites[],unlocks[],applications[],difficulty,difficultyLabel,difficultyExplanation,difficultyFactors[],estimatedLearningTime?,readinessScore,goalAlignmentScore,prerequisiteGapScore,utilityScore,recommendationScore,confidence,evidence[].`,
   buildUserPrompt(input) {
-    return `Known concepts (user-provided): ${input.knownConcepts.join(", ")}
+    return `Known foundation bricks supplied by the learner: ${input.knownConcepts.join(", ")}
 Brick intent: ${input.intent}
-Goal: ${input.intent === "destination" ? (input.goal || input.learnerProfile?.learningGoal || input.learnerProfile?.goal || "not specified") : "none — Explore mode should rank reachable possibilities without optimizing for a destination"}
+Destination: ${input.intent === "destination" ? (input.goal || input.learnerProfile?.learningGoal || input.learnerProfile?.goal || "not specified") : "none"}
 Learner/session profile: ${JSON.stringify(input.learnerProfile ?? {})}
-Explore-mode rule: if the profile contains a learningGoal, treat it only as explanatory context; do not use it as a hidden destination or suppress diverse reachable branches.
-Target peer difficulty layer: ${input.targetLevel ? `${JSON.stringify(input.targetLevel)}\n${levelInvariantSummary(input.targetLevel)}` : "not established yet; choose a coherent next-step difficulty band"}
+Target peer layer: ${input.targetLevel ? `${JSON.stringify(input.targetLevel)}\n${levelInvariantSummary(input.targetLevel)}` : "Choose one coherent next-step difficulty band."}
 Optional source evidence: ${JSON.stringify(input.retrievedEvidence ?? [])}
 Revision feedback: ${input.revisionFeedback?.join(" | ") || "none"}
 
-Generate realistic reachable next bricks at a comparable next-step challenge. Respect knowledge level, language style, depth, purpose, resource preferences, and source mode. Explain why each is difficult and what it unlocks.`;
+Construct the next Brick layer. Keep the supplied foundation intact. Suggest only genuinely missing foundation bricks. In destination mode, estimate the destination height from the ORIGINAL Height 0, keep that estimate at or above the target peer layer, and explain it without pretending ungenerated intermediate layers already exist.`;
   },
 };

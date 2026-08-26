@@ -118,4 +118,23 @@ describe("POST /api/agent", () => {
     expect(mocks.navigateTree).not.toHaveBeenCalled();
   });
 
+  it("returns a clean 429 when every available provider is rate-limited", async () => {
+    const { LLMResponseError } = await import("@/lib/llm/provider");
+    mocks.navigateTree.mockRejectedValueOnce(new LLMResponseError("groq is rate-limited or out of quota.", {
+      kind: "rate_limit",
+      status: 429,
+      retryAfterMs: 12_000,
+    }));
+    const { POST } = await import("@/app/api/agent/route");
+    const response = await POST(new Request("http://localhost/api/agent", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "navigate", traversal: { mode: "tree", intent: "decompose" }, topic: "Calculus" }),
+    }));
+    expect(response.status).toBe(429);
+    const payload = await response.json();
+    expect(payload.error.code).toBe("provider_rate_limited");
+    expect(payload.error.message).not.toContain("API_KEY");
+  });
+
 });

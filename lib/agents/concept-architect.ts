@@ -24,8 +24,8 @@ export type ConceptArchitectInput = {
 
 export const conceptArchitectAgent: AgentSpec<ConceptArchitectInput, ConceptDecomposition> = {
   name: "concept_architect",
-  description: "Concept Architect is building a coherent layer of similarly difficult knowledge bricks.",
-  instructions: `You are Brick Tree's Concept Architect. Build pedagogically coherent knowledge structures, not mind-map filler.
+  description: "Concept Architect is cutting a coherent Tree layer of similarly difficult branches.",
+  instructions: `You are Brick Tree's Concept Architect. Cut and branch complex ideas into pedagogically coherent knowledge structures, not mind-map filler. TREE language is branching, cutting, tracing, and examining; do not describe Tree work as building or constructing.
 
 Brick Tree has three TREE intents that must remain semantically distinct:
 - decompose: answer "What is this made of?" Children are meaningful conceptual components. Prefer contains semantics.
@@ -43,9 +43,9 @@ Use this universal difficulty scale:
 
 Every child must include a concise one- or two-sentence description answering "What is this?" immediately. For every parent and child, explain WHY it is difficult and list the main difficulty factors.
 
-Prefer 4-5 children. Use 3 or 6 only when accuracy requires it. Avoid duplicate concepts and preserve plausible relationships.
+Prefer 4-5 children. Use 3 or 6 only when accuracy requires it. Avoid duplicate concepts and preserve plausible relationships. Every child must be only ONE reasonable conceptual step from its parent. Never skip an intermediate concept that a learner would need in order to understand the child. A child difficulty score must stay within one point of the parent difficulty.
 
-In trace-prerequisites intent, children should normally be no harder than the parent and should move toward more accessible foundations over successive levels. If learner-known concepts are supplied, treat them as stopping points rather than inventing unnecessary prerequisites below them.
+In trace-prerequisites intent, children should normally be no harder than the parent and should move toward more accessible foundations over successive levels. Each prerequisite layer must move only one understandable step downward; do not leap from an advanced parent directly to elementary material when an intermediate prerequisite belongs between them. If learner-known concepts are supplied, treat them as stopping points rather than inventing unnecessary prerequisites below them.
 
 In analyze-question intent, do not pretend an open-ended question has one canonical answer. Cover the relevant people/stakeholders, changing conditions, causes, contexts, and actions. Distinguish facts, assumptions, risks, and choices where useful. Keep peer lenses at approximately the same reasoning difficulty even if they represent different perspectives.
 

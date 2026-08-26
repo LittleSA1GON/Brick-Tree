@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  type CSSProperties,
   type FormEvent,
   useCallback,
   useEffect,
@@ -22,7 +21,6 @@ import {
   hasGeneratedTraversalNeighbors,
   mergeGraphPatch,
   traversalRelationships,
-  visibleGraph,
 } from "@/lib/graph/client-state";
 import type { AdaptiveExplanation } from "@/components/node/NodeDetailPanel";
 import { LearnerProfile } from "@/components/learning/LearnerProfile";
@@ -63,15 +61,37 @@ type BrickData = {
 
 type ResourceData = { resources: ResourceLink[]; summary: string };
 
+type WorkspaceSnapshot = {
+  id: string;
+  name: string;
+  mode: PrimaryMode;
+  treeIntent: TreeIntent;
+  brickIntent: BrickIntent;
+  topic: string;
+  knownInput: string;
+  goal: string;
+  nodes: ConceptNode[];
+  edges: ConceptEdge[];
+  levels: GraphLevelDescriptor[];
+  expandedNodeIds: string[];
+  selectedNodeId?: string;
+  focusedNodeId?: string;
+  viewRootId?: string;
+  learningPath?: LearningPathProposal;
+  trace: AgentTraceEvent[];
+  explanations: Record<string, AdaptiveExplanation>;
+  createdAt: number;
+};
+
 const TREE_INTENT_COPY: Record<
   TreeIntent,
   { title: string; prompt: string; placeholder: string; action: string; busy: string }
 > = {
   decompose: {
-    title: "Break down",
+    title: "Cut down",
     prompt: "What do you want to cut down?",
     placeholder: "Machine learning",
-    action: "Build Tree",
+    action: "Cut into branches",
     busy: "Cutting the idea into useful parts…",
   },
   "trace-prerequisites": {
@@ -127,36 +147,9 @@ function modeAxis(mode: PrimaryMode): "Depth" | "Height" {
   return mode === "tree" ? "Depth" : "Height";
 }
 
-function connectionLabel(type: ConceptEdge["relationshipType"]): string {
-  switch (type) {
-    case "contains": return "contains";
-    case "prerequisite": return "needs first";
-    case "builds-on": return "builds on";
-    case "leads-to": return "leads to";
-    case "examines": return "examines";
-    default: return "related to";
-  }
-}
-
-function nodeLevelReason(
-  mode: PrimaryMode,
-  level: number,
-  node: ConceptNode,
-  startingDifficulty: number,
-): string {
-  if (level === 0) {
-    return `0 is the starting point you supplied. ${mode === "tree" ? "Depth" : "Height"} counts steps away from this node, so the map does not pretend your starting knowledge begins at 1.`;
-  }
-
-  const direction = mode === "tree"
-    ? `Depth ${level} is ${level} step${level === 1 ? "" : "s"} deeper into the idea or its foundations.`
-    : `Height ${level} is ${level} step${level === 1 ? "" : "s"} beyond the starting knowledge.`;
-  const comparison = node.difficulty > startingDifficulty
-    ? "This node is more complex than level 0"
-    : node.difficulty < startingDifficulty
-      ? "This node is less complex than level 0"
-      : "This node is about as complex as level 0";
-  return `${direction} ${comparison} because ${node.difficultyExplanation.charAt(0).toLowerCase()}${node.difficultyExplanation.slice(1)}`;
+function levelLabel(mode: PrimaryMode, level: number): string {
+  if (mode === "tree") return `Depth ${level}`;
+  return `Height ${level > 0 ? `+${level}` : level}`;
 }
 
 function statusText(status: ConceptNode["knowledgeStatus"]): string {
@@ -172,6 +165,8 @@ function statusText(status: ConceptNode["knowledgeStatus"]): string {
 export function BrickTreeApp() {
   const [phase, setPhase] = useState<ExperiencePhase>("landing");
   const [mode, setMode] = useState<PrimaryMode>("tree");
+  const [workspaces, setWorkspaces] = useState<WorkspaceSnapshot[]>([]);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>();
   const [treeIntent, setTreeIntent] = useState<TreeIntent>("decompose");
   const [brickIntent, setBrickIntent] = useState<BrickIntent>("explore");
   const [topic, setTopic] = useState("Machine Learning");
@@ -196,10 +191,7 @@ export function BrickTreeApp() {
   const [explanationLoadingNodeId, setExplanationLoadingNodeId] = useState<string>();
   const [explanations, setExplanations] = useState<Record<string, AdaptiveExplanation>>({});
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [activeNodeId, setActiveNodeId] = useState<string>();
   const requestRef = useRef<AbortController | null>(null);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const nodeElements = useRef(new Map<string, HTMLElement>());
 
   useEffect(() => () => requestRef.current?.abort(), []);
 
@@ -223,14 +215,6 @@ export function BrickTreeApp() {
       : { mode: "brick", intent: brickIntent }
   ), [mode, treeIntent, brickIntent]);
 
-  const visible = useMemo(
-    () => visibleGraph(nodes, edges, expandedNodeIds, {
-      traversal,
-      rootNodeIds: viewRootId ? [viewRootId] : undefined,
-    }),
-    [nodes, edges, expandedNodeIds, traversal, viewRootId],
-  );
-
   const activeRelationships = useMemo(() => traversalRelationships(traversal), [traversal]);
   const generatedNodeIds = useMemo(
     () => new Set(
@@ -242,42 +226,58 @@ export function BrickTreeApp() {
   );
 
   const rootNode = useMemo(
-    () => nodes.find((node) => node.id === viewRootId) ?? nodes.find((node) => !node.parentId),
-    [nodes, viewRootId],
+    () => nodes.find((node) => !node.parentId),
+    [nodes],
   );
   const baseDepth = rootNode?.depth ?? 0;
 
-  const orderedNodes = useMemo(() => {
-    const visibleIds = new Set(visible.nodes.map((node) => node.id));
-    const outgoing = new Map<string, string[]>();
-    for (const edge of visible.edges) {
-      if (!activeRelationships.has(edge.relationshipType)) continue;
-      const items = outgoing.get(edge.source) ?? [];
-      items.push(edge.target);
-      outgoing.set(edge.source, items);
-    }
-    const byId = new Map(visible.nodes.map((node) => [node.id, node]));
-    const ordered: ConceptNode[] = [];
-    const seen = new Set<string>();
-    const queue = rootNode && visibleIds.has(rootNode.id) ? [rootNode.id] : visible.nodes.map((node) => node.id);
-    while (queue.length) {
-      const id = queue.shift()!;
-      if (seen.has(id)) continue;
-      seen.add(id);
-      const node = byId.get(id);
-      if (node) ordered.push(node);
-      const children = (outgoing.get(id) ?? [])
-        .filter((childId) => visibleIds.has(childId))
-        .sort((a, b) => (byId.get(a)?.title ?? "").localeCompare(byId.get(b)?.title ?? ""));
-      queue.push(...children);
-    }
-    for (const node of visible.nodes) if (!seen.has(node.id)) ordered.push(node);
-    return ordered;
-  }, [visible.nodes, visible.edges, activeRelationships, rootNode]);
+  const mapNodes = useMemo(() => nodes
+    .filter((node) => !(mode === "brick" && node.id === rootNode?.id && node.title === "Your Foundations"))
+    .sort((a, b) => a.depth - b.depth || a.title.localeCompare(b.title)), [nodes, mode, rootNode?.id]);
 
-  const nodeLevel = useCallback((node: ConceptNode) => Math.max(0, node.depth - baseDepth), [baseDepth]);
-  const maxLevel = useMemo(() => orderedNodes.reduce((max, node) => Math.max(max, nodeLevel(node)), 0), [orderedNodes, nodeLevel]);
-  const activeIndex = Math.max(0, orderedNodes.findIndex((node) => node.id === activeNodeId));
+  const focusNode = useMemo(() => {
+    const requested = focusedNodeId ?? selectedNodeId;
+    const requestedNode = requested ? nodes.find((node) => node.id === requested) : undefined;
+    if (mode === "brick" && requestedNode?.id === rootNode?.id && requestedNode.title === "Your Foundations") return undefined;
+    return requestedNode ?? (mode === "tree" ? rootNode : undefined);
+  }, [focusedNodeId, selectedNodeId, nodes, mode, rootNode]);
+
+  const focusChildren = useMemo(() => {
+    if (!focusNode) return [];
+    const childIds = edges
+      .filter((edge) => edge.source === focusNode.id && activeRelationships.has(edge.relationshipType))
+      .map((edge) => edge.target);
+    const childSet = new Set(childIds);
+    return nodes.filter((node) => childSet.has(node.id)).sort((a, b) => a.title.localeCompare(b.title));
+  }, [focusNode, edges, activeRelationships, nodes]);
+
+  const focusParent = useMemo(() => {
+    if (!focusNode) return undefined;
+    const incoming = edges.find((edge) => edge.target === focusNode.id && activeRelationships.has(edge.relationshipType));
+    if (incoming) return nodes.find((node) => node.id === incoming.source);
+    return focusNode.parentId ? nodes.find((node) => node.id === focusNode.parentId) : undefined;
+  }, [focusNode, edges, activeRelationships, nodes]);
+
+  const brickFoundations = useMemo(() => {
+    if (mode !== "brick" || !rootNode) return [];
+    return nodes
+      .filter((node) => node.parentId === rootNode.id && node.depth === 0)
+      .sort((a, b) => a.title.localeCompare(b.title));
+  }, [mode, rootNode, nodes]);
+
+  const brickFirstLayer = useMemo(() => {
+    if (mode !== "brick") return [];
+    const foundationIds = new Set(brickFoundations.map((node) => node.id));
+    const targetIds = new Set(edges.filter((edge) => foundationIds.has(edge.source)).map((edge) => edge.target));
+    return nodes.filter((node) => targetIds.has(node.id)).sort((a, b) => a.title.localeCompare(b.title));
+  }, [mode, brickFoundations, edges, nodes]);
+
+  const nodeLevel = useCallback((node: ConceptNode) => {
+    const offset = Math.max(0, node.depth - baseDepth);
+    return mode === "tree" ? -offset : offset;
+  }, [baseDepth, mode]);
+
+  const availableLevels = useMemo(() => [...new Set(mapNodes.map((node) => nodeLevel(node)))].sort((a, b) => mode === "tree" ? b - a : a - b), [mapNodes, nodeLevel, mode]);
 
   const agentDocuments = useMemo(() => {
     if ((profile.sourceMode ?? "general") === "general") return undefined;
@@ -316,34 +316,103 @@ export function BrickTreeApp() {
     requestRef.current = null;
   }, []);
 
-  const resetGraph = useCallback(() => {
+  const workspaceName = useCallback((workspaceMode = mode) => {
+    const rootTitle = nodes.find((node) => !node.parentId)?.title;
+    if (rootTitle && rootTitle !== "Your Foundations") return rootTitle;
+    if (workspaceMode === "brick") return goal.trim() || parseKnownConcepts(knownInput).slice(0, 2).join(" + ") || "New Brick";
+    return topic.trim() || "New Tree";
+  }, [mode, nodes, goal, knownInput, topic]);
+
+  const applyWorkspace = useCallback((workspace: WorkspaceSnapshot) => {
     requestRef.current?.abort();
-    setNodes([]);
-    setEdges([]);
-    setLevels([]);
-    setExpandedNodeIds(new Set());
-    setSelectedNodeId(undefined);
-    setFocusedNodeId(undefined);
-    setViewRootId(undefined);
-    setLearningPath(undefined);
-    setTrace([]);
+    setActiveWorkspaceId(workspace.id);
+    setMode(workspace.mode);
+    setTreeIntent(workspace.treeIntent);
+    setBrickIntent(workspace.brickIntent);
+    setTopic(workspace.topic);
+    setKnownInput(workspace.knownInput);
+    setGoal(workspace.goal);
+    setNodes(workspace.nodes.map(migrateNode));
+    setEdges(workspace.edges);
+    setLevels(workspace.levels);
+    setExpandedNodeIds(new Set(workspace.expandedNodeIds));
+    setSelectedNodeId(workspace.selectedNodeId);
+    setFocusedNodeId(workspace.focusedNodeId);
+    setViewRootId(workspace.viewRootId);
+    setLearningPath(workspace.learningPath);
+    setTrace(workspace.trace);
+    setExplanations(workspace.explanations);
     setWarnings([]);
     setError(undefined);
-    setExplanations({});
-    setActiveNodeId(undefined);
-    nodeElements.current.clear();
   }, []);
 
+  const createWorkspace = useCallback((nextMode: PrimaryMode, seed?: { topic?: string; knownInput?: string; goal?: string }) => {
+    const id = typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const workspace: WorkspaceSnapshot = {
+      id,
+      name: nextMode === "tree" ? seed?.topic || "New Tree" : seed?.goal || seed?.knownInput || "New Brick",
+      mode: nextMode,
+      treeIntent: "decompose",
+      brickIntent: seed?.goal ? "destination" : "explore",
+      topic: seed?.topic ?? (nextMode === "tree" ? "Machine Learning" : ""),
+      knownInput: seed?.knownInput ?? (nextMode === "brick" ? "Algebra, basic statistics, Python" : ""),
+      goal: seed?.goal ?? "",
+      nodes: [],
+      edges: [],
+      levels: [],
+      expandedNodeIds: [],
+      trace: [],
+      explanations: {},
+      createdAt: Date.now(),
+    };
+    setWorkspaces((current) => [...current, workspace]);
+    applyWorkspace(workspace);
+    setPhase("workspace");
+    setDrawerOpen(false);
+  }, [applyWorkspace]);
+
+  const switchWorkspace = useCallback((id: string) => {
+    const workspace = workspaces.find((item) => item.id === id);
+    if (!workspace) return;
+    applyWorkspace(workspace);
+    setDrawerOpen(false);
+  }, [workspaces, applyWorkspace]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId) return;
+    setWorkspaces((current) => current.map((workspace) => workspace.id === activeWorkspaceId ? {
+      ...workspace,
+      name: workspaceName(mode),
+      mode,
+      treeIntent,
+      brickIntent,
+      topic,
+      knownInput,
+      goal,
+      nodes,
+      edges,
+      levels,
+      expandedNodeIds: [...expandedNodeIds],
+      selectedNodeId,
+      focusedNodeId,
+      viewRootId,
+      learningPath,
+      trace: trace.slice(-100),
+      explanations,
+    } : workspace));
+  }, [activeWorkspaceId, workspaceName, mode, treeIntent, brickIntent, topic, knownInput, goal, nodes, edges, levels, expandedNodeIds, selectedNodeId, focusedNodeId, viewRootId, learningPath, trace, explanations]);
+
   const switchMode = useCallback((nextMode: PrimaryMode) => {
-    setMode(nextMode);
-    const anchor = selectedNodeId ?? activeNodeId ?? viewRootId;
-    if (anchor) {
-      setViewRootId(anchor);
-      setFocusedNodeId(anchor);
-      setExpandedNodeIds((current) => new Set([...current, anchor]));
-      requestAnimationFrame(() => nodeElements.current.get(anchor)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    if (nextMode === mode) return;
+    const existing = [...workspaces].reverse().find((workspace) => workspace.mode === nextMode);
+    if (existing) {
+      applyWorkspace(existing);
+      return;
     }
-  }, [selectedNodeId, activeNodeId, viewRootId]);
+    createWorkspace(nextMode);
+  }, [mode, workspaces, applyWorkspace, createWorkspace]);
 
   async function generateInitial(event?: FormEvent) {
     event?.preventDefault();
@@ -376,7 +445,6 @@ export function BrickTreeApp() {
         setExpandedNodeIds(new Set([root.id]));
         setSelectedNodeId(root.id);
         setFocusedNodeId(root.id);
-        setActiveNodeId(root.id);
         setViewRootId(root.id);
         setLearningPath(undefined);
         setTrace(response.trace as AgentTraceEvent[]);
@@ -400,14 +468,12 @@ export function BrickTreeApp() {
         setExpandedNodeIds(new Set([root.id]));
         setSelectedNodeId(root.id);
         setFocusedNodeId(root.id);
-        setActiveNodeId(root.id);
         setViewRootId(root.id);
         setLearningPath(response.data.learningPath);
         setTrace(response.trace as AgentTraceEvent[]);
         setWarnings(response.warnings);
       }
       setExplanations({});
-      requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" }));
     } catch (requestError) {
       if ((requestError as Error).name !== "AbortError") setError((requestError as Error).message);
     } finally {
@@ -537,11 +603,10 @@ export function BrickTreeApp() {
   function teleportNode(nodeId: string) {
     selectNode(nodeId, false);
     setDrawerOpen(false);
-    requestAnimationFrame(() => nodeElements.current.get(nodeId)?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
 
-  function scrollToLevel(level: number) {
-    const node = orderedNodes.find((item) => nodeLevel(item) === level);
+  function selectLevel(level: number) {
+    const node = mapNodes.find((item) => nodeLevel(item) === level);
     if (node) teleportNode(node.id);
   }
 
@@ -562,18 +627,10 @@ export function BrickTreeApp() {
   function branchFromNode(nodeId: string, nextMode: PrimaryMode) {
     const node = nodes.find((item) => item.id === nodeId);
     if (!node) return;
-    selectNode(nodeId, false);
-    setMode(nextMode);
-    setViewRootId(nodeId);
-    setExpandedNodeIds((current) => new Set([...current, nodeId]));
     if (nextMode === "tree") {
-      setTreeIntent("decompose");
-      void expandNodeWithTraversal(nodeId, { mode: "tree", intent: "decompose" });
+      createWorkspace("tree", { topic: node.title });
     } else {
-      markKnown(nodeId);
-      const nextIntent: BrickIntent = goal.trim() ? "destination" : "explore";
-      setBrickIntent(nextIntent);
-      void expandNodeWithTraversal(nodeId, { mode: "brick", intent: nextIntent });
+      createWorkspace("brick", { knownInput: node.title });
     }
   }
 
@@ -601,27 +658,18 @@ export function BrickTreeApp() {
   }
 
   function useDocumentAsTopic(document: ExtractedDocument) {
-    resetGraph();
-    setMode("tree");
-    setTreeIntent("decompose");
-    setTopic(document.title || document.fileName);
     setProfile((current) => ({
       ...current,
       sourceMode: "prefer-uploaded",
       sourceDocumentIds: [document.id],
       purpose: current.purpose === "general-learning" ? "research" : current.purpose,
     }));
+    createWorkspace("tree", { topic: document.title || document.fileName });
     setWarnings([`Source ready: ${document.title}. Tree will prefer evidence from this file.`]);
   }
 
   function startNewGraph() {
-    resetGraph();
-    setDocuments([]);
-    setProfile(DEFAULT_PROFILE);
-    setKnownInput("");
-    setGoal("");
-    setTopic("Machine Learning");
-    setDrawerOpen(false);
+    createWorkspace(mode);
   }
 
   const buildPortableState = useCallback((): PortableSessionState => ({
@@ -643,7 +691,9 @@ export function BrickTreeApp() {
     learningPath,
     trace: trace.slice(-100),
     explanations,
-  }), [mode, treeIntent, brickIntent, nodes, edges, levels, expandedNodeIds, selectedNodeId, focusedNodeId, viewRootId, goal, knownInput, topic, profile, documents, learningPath, trace, explanations]);
+    workspaces: workspaces.map((workspace) => ({ ...workspace, trace: workspace.trace.slice(-100) })),
+    activeWorkspaceId,
+  }), [mode, treeIntent, brickIntent, nodes, edges, levels, expandedNodeIds, selectedNodeId, focusedNodeId, viewRootId, goal, knownInput, topic, profile, documents, learningPath, trace, explanations, workspaces, activeWorkspaceId]);
 
   function downloadSession() {
     const session = createPortableSessionFile(buildPortableState());
@@ -668,53 +718,47 @@ export function BrickTreeApp() {
     }
     const saved = parsePortableSessionFile(parsedJson).state;
     requestRef.current?.abort();
-    setMode(saved.mode);
-    setTreeIntent(saved.treeIntent);
-    setBrickIntent(saved.brickIntent);
-    setNodes(saved.nodes.map(migrateNode));
-    setEdges(saved.edges);
-    setLevels(saved.levels);
-    setExpandedNodeIds(new Set(saved.expandedNodeIds));
-    setSelectedNodeId(saved.selectedNodeId);
-    setFocusedNodeId(saved.focusedNodeId);
-    setActiveNodeId(saved.focusedNodeId ?? saved.selectedNodeId);
-    setViewRootId(saved.viewRootId ?? saved.focusedNodeId ?? saved.selectedNodeId);
-    setGoal(saved.goal);
-    setKnownInput(saved.knownInput);
-    setTopic(saved.topic);
     setProfile({ ...DEFAULT_PROFILE, ...saved.profile });
     setDocuments(saved.documents);
-    setLearningPath(saved.learningPath);
-    setTrace(saved.trace);
-    setExplanations(saved.explanations as Record<string, AdaptiveExplanation>);
+    const restoredWorkspaces: WorkspaceSnapshot[] = saved.workspaces.length
+      ? saved.workspaces.map((workspace) => ({
+          ...workspace,
+          nodes: workspace.nodes.map(migrateNode),
+          explanations: workspace.explanations as Record<string, AdaptiveExplanation>,
+        }))
+      : [{
+          id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-restored`,
+          name: saved.mode === "tree" ? saved.topic || "Restored Tree" : saved.goal || saved.knownInput || "Restored Brick",
+          mode: saved.mode,
+          treeIntent: saved.treeIntent,
+          brickIntent: saved.brickIntent,
+          topic: saved.topic,
+          knownInput: saved.knownInput,
+          goal: saved.goal,
+          nodes: saved.nodes.map(migrateNode),
+          edges: saved.edges,
+          levels: saved.levels,
+          expandedNodeIds: saved.expandedNodeIds,
+          selectedNodeId: saved.selectedNodeId,
+          focusedNodeId: saved.focusedNodeId,
+          viewRootId: saved.viewRootId,
+          learningPath: saved.learningPath,
+          trace: saved.trace,
+          explanations: saved.explanations as Record<string, AdaptiveExplanation>,
+          createdAt: Date.now(),
+        }];
+    setWorkspaces(restoredWorkspaces);
+    const restoredActive = restoredWorkspaces.find((workspace) => workspace.id === saved.activeWorkspaceId) ?? restoredWorkspaces[0];
+    if (restoredActive) applyWorkspace(restoredActive);
     setError(undefined);
     setWarnings([`Restored ${file.name}.`]);
     setPhase("workspace");
   }
 
-  useEffect(() => {
-    const root = scrollRef.current;
-    if (!root || !orderedNodes.length) return;
-    const observer = new IntersectionObserver((entries) => {
-      const visibleEntry = entries
-        .filter((entry) => entry.isIntersecting)
-        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-      const nodeId = (visibleEntry?.target as HTMLElement | undefined)?.dataset.nodeId;
-      if (nodeId) {
-        setActiveNodeId(nodeId);
-        setFocusedNodeId(nodeId);
-      }
-    }, { root, threshold: [0.4, 0.62, 0.78] });
 
-    for (const node of orderedNodes) {
-      const element = nodeElements.current.get(node.id);
-      if (element) observer.observe(element);
-    }
-    return () => observer.disconnect();
-  }, [orderedNodes]);
 
   if (phase === "landing") {
-    return <Landing onBegin={(nextMode) => { setMode(nextMode); setPhase("workspace"); }} />;
+    return <Landing onBegin={(nextMode) => createWorkspace(nextMode)} />;
   }
 
   return (
@@ -729,10 +773,16 @@ export function BrickTreeApp() {
         <span /><span /><span />
       </button>
 
-      <AxisRail axis={modeAxis(mode)} maxLevel={maxLevel} activeLevel={orderedNodes.find((node) => node.id === activeNodeId) ? nodeLevel(orderedNodes.find((node) => node.id === activeNodeId)!) : 0} onSelect={scrollToLevel} />
+      <AxisRail
+        axis={modeAxis(mode)}
+        levels={availableLevels}
+        activeLevel={focusNode ? nodeLevel(focusNode) : 0}
+        descriptors={levels}
+        onSelect={selectLevel}
+      />
 
-      <div ref={scrollRef} className={styles.scrollCanvas}>
-        {!orderedNodes.length ? (
+      <div className={styles.hierarchyViewport}>
+        {!nodes.length ? (
           <section className={`${styles.setupSection} ${mode === "brick" ? styles.setupBottom : styles.setupTop}`}>
             <SetupNode
               mode={mode}
@@ -764,69 +814,52 @@ export function BrickTreeApp() {
               onDismissWarnings={() => setWarnings([])}
             />
           </section>
-        ) : orderedNodes.map((node, index) => {
-          const level = nodeLevel(node);
-          const explanation = explanations[node.id];
-          const outgoing = visible.edges.filter((edge) => edge.source === node.id && activeRelationships.has(edge.relationshipType));
-          const recommended = Boolean(learningPath?.recommendedTitle && learningPath.recommendedTitle === node.title);
-          const distance = Math.min(4, Math.abs(index - activeIndex));
-          const cardStyle = {
-            "--node-delay": `${Math.min(index, 5) * 70}ms`,
-            "--node-scale": Math.max(0.7, 1 - distance * 0.075),
-            "--node-opacity": Math.max(0.5, 1 - distance * 0.13),
-          } as CSSProperties;
-          return (
-            <section
-              key={node.id}
-              ref={(element) => {
-                if (element) nodeElements.current.set(node.id, element);
-                else nodeElements.current.delete(node.id);
-              }}
-              data-node-id={node.id}
-              className={`${styles.nodeSection} ${index === 0 && mode === "brick" ? styles.brickRootSection : ""}`}
-              style={cardStyle}
-            >
-              <KnowledgeNode
-                node={node}
-                mode={mode}
-                level={level}
-                startingDifficulty={rootNode?.difficulty ?? node.difficulty}
-                selected={selectedNodeId === node.id}
-                active={activeNodeId === node.id}
-                recommended={recommended}
-                recommendationReason={recommended ? learningPath?.recommendationReason : undefined}
-                explanation={explanation}
-                outgoing={outgoing}
-                relatedNodes={nodes}
-                generated={generatedNodeIds.has(node.id)}
-                busy={loadingNodeId === node.id}
-                busyLabel={loadingNodeId === node.id ? busyLabel : undefined}
-                explanationLoading={explanationLoadingNodeId === node.id}
-                resourceLoading={resourceLoadingNodeId === node.id}
-                error={selectedNodeId === node.id ? error : undefined}
-                warnings={selectedNodeId === node.id ? warnings : []}
-                onSelect={(loadExplanation) => selectNode(node.id, loadExplanation)}
-                onContinue={() => { selectNode(node.id, false); void expandNode(node.id); }}
-                onFindResources={() => void findResources(node.id)}
-                onMarkKnown={() => markKnown(node.id)}
-                onTreeFromHere={() => branchFromNode(node.id, "tree")}
-                onBrickFromHere={() => branchFromNode(node.id, "brick")}
-                onDismissMessages={() => { setError(undefined); setWarnings([]); }}
-              />
-            </section>
-          );
-        })}
+        ) : (
+          <HierarchyStage
+            key={`${activeWorkspaceId ?? "workspace"}:${focusNode?.id ?? "overview"}`}
+            mode={mode}
+            focusNode={focusNode}
+            focusParent={focusParent}
+            children={focusChildren}
+            foundations={brickFoundations}
+            firstBrickLayer={brickFirstLayer}
+            learningPath={learningPath}
+            goal={goal}
+            selectedNodeId={selectedNodeId}
+            generatedNodeIds={generatedNodeIds}
+            explanations={explanations}
+            loadingNodeId={loadingNodeId}
+            resourceLoadingNodeId={resourceLoadingNodeId}
+            explanationLoadingNodeId={explanationLoadingNodeId}
+            busyLabel={busyLabel}
+            error={error}
+            warnings={warnings}
+            onFocus={(id) => selectNode(id, false)}
+            onBack={() => focusParent && teleportNode(focusParent.id)}
+            onContinue={(id) => { selectNode(id, false); void expandNode(id); }}
+            onExplain={(id) => void explainNode(id, explanationLevel(profile))}
+            onFindResources={(id) => void findResources(id)}
+            onMarkKnown={markKnown}
+            onTreeFromHere={(id) => branchFromNode(id, "tree")}
+            onBrickFromHere={(id) => branchFromNode(id, "brick")}
+            onDismissMessages={() => { setError(undefined); setWarnings([]); }}
+          />
+        )}
       </div>
 
       <NavigatorDrawer
         open={drawerOpen}
         mode={mode}
-        nodes={orderedNodes}
-        edges={visible.edges}
-        baseDepth={baseDepth}
-        activeNodeId={activeNodeId}
-        hasSession={Boolean(nodes.length || documents.length)}
+        workspaces={workspaces}
+        activeWorkspaceId={activeWorkspaceId}
+        nodes={mapNodes}
+        edges={edges}
+        activeNodeId={focusNode?.id ?? selectedNodeId}
+        learningPath={learningPath}
+        goal={goal}
+        hasSession={Boolean(workspaces.length || documents.length)}
         onClose={() => setDrawerOpen(false)}
+        onSwitchWorkspace={switchWorkspace}
         onTeleport={teleportNode}
         onDownload={downloadSession}
         onNew={startNewGraph}
@@ -858,7 +891,7 @@ function Landing({ onBegin }: { onBegin: (mode: PrimaryMode) => void }) {
       </div>
 
       <section className={styles.landingFacts} aria-label="How Brick Tree works">
-        <article><strong>Tree</strong><p>Break a concept into parts, trace what comes before it, or unpack an open question.</p></article>
+        <article><strong>Tree</strong><p>Cut a concept into useful branches, trace what comes before it, or unpack an open question.</p></article>
         <article><strong>Brick</strong><p>Start from known skills and surface realistic next concepts—or aim toward a destination.</p></article>
         <article><strong>Keep moving</strong><p>Open any node for detail and resources, then continue from that exact point.</p></article>
       </section>
@@ -879,22 +912,51 @@ function ModeDock({ mode, onChange }: { mode: PrimaryMode; onChange: (mode: Prim
   );
 }
 
-function AxisRail({ axis, maxLevel, activeLevel, onSelect }: {
+function AxisRail({ axis, levels, activeLevel, descriptors, onSelect }: {
   axis: "Depth" | "Height";
-  maxLevel: number;
+  levels: number[];
   activeLevel: number;
+  descriptors: GraphLevelDescriptor[];
   onSelect: (level: number) => void;
 }) {
+  const [openLevel, setOpenLevel] = useState<number>();
+  const axisKey = axis === "Depth" ? "depth" : "height";
+  const available = levels.length ? levels : [0];
+  const descriptor = openLevel === undefined
+    ? undefined
+    : descriptors.find((item) => item.axis === axisKey && item.index === Math.abs(openLevel));
+
   return (
     <aside className={styles.axisRail} aria-label={`${axis} levels`}>
       <span>{axis}</span>
       <div>
-        {Array.from({ length: maxLevel + 1 }, (_, level) => (
-          <button key={level} type="button" className={activeLevel === level ? styles.axisActive : ""} onClick={() => onSelect(level)}>
-            <i />{level}
+        {available.map((level) => (
+          <button
+            key={level}
+            type="button"
+            className={activeLevel === level ? styles.axisActive : ""}
+            onClick={() => {
+              onSelect(level);
+              setOpenLevel((current) => current === level ? undefined : level);
+            }}
+            aria-label={`${axis} ${level > 0 ? `+${level}` : level}`}
+          >
+            <i />{level > 0 ? `+${level}` : level}
           </button>
         ))}
       </div>
+      {openLevel !== undefined ? (
+        <div className={styles.axisPopover}>
+          <strong>{axis} {openLevel > 0 ? `+${openLevel}` : openLevel}</strong>
+          <p>{descriptor?.description || (openLevel === 0
+            ? axis === "Depth"
+              ? "Depth 0 is the concept or question you chose as the root of this Tree."
+              : "Height 0 is the foundation knowledge you supplied to start this Brick map."
+            : axis === "Depth"
+              ? "One branch below the previous Tree layer. Each step cuts the focused idea into one directly understandable layer."
+              : "One construction layer above the previous Brick layer. Each step adds only directly reachable knowledge.")}</p>
+        </div>
+      ) : null}
     </aside>
   );
 }
@@ -903,10 +965,211 @@ function Buffer({ label }: { label?: string }) {
   return (
     <div className={styles.buffer} role="status" aria-live="polite">
       <div className={styles.bufferTrack}><i /><i /><i /><i /></div>
-      <span>{label || "Agents are building the next layer…"}</span>
+      <span>{label || "Agents are preparing the next layer…"}</span>
     </div>
   );
 }
+
+function HierarchyStage({
+  mode,
+  focusNode,
+  focusParent,
+  children,
+  foundations,
+  firstBrickLayer,
+  learningPath,
+  goal,
+  selectedNodeId,
+  generatedNodeIds,
+  explanations,
+  loadingNodeId,
+  resourceLoadingNodeId,
+  explanationLoadingNodeId,
+  busyLabel,
+  error,
+  warnings,
+  onFocus,
+  onBack,
+  onContinue,
+  onExplain,
+  onFindResources,
+  onMarkKnown,
+  onTreeFromHere,
+  onBrickFromHere,
+  onDismissMessages,
+}: {
+  mode: PrimaryMode;
+  focusNode?: ConceptNode;
+  focusParent?: ConceptNode;
+  children: ConceptNode[];
+  foundations: ConceptNode[];
+  firstBrickLayer: ConceptNode[];
+  learningPath?: LearningPathProposal;
+  goal: string;
+  selectedNodeId?: string;
+  generatedNodeIds: Set<string>;
+  explanations: Record<string, AdaptiveExplanation>;
+  loadingNodeId?: string;
+  resourceLoadingNodeId?: string;
+  explanationLoadingNodeId?: string;
+  busyLabel?: string;
+  error?: string;
+  warnings: string[];
+  onFocus: (id: string) => void;
+  onBack: () => void;
+  onContinue: (id: string) => void;
+  onExplain: (id: string) => void;
+  onFindResources: (id: string) => void;
+  onMarkKnown: (id: string) => void;
+  onTreeFromHere: (id: string) => void;
+  onBrickFromHere: (id: string) => void;
+  onDismissMessages: () => void;
+}) {
+  const destination = mode === "brick" && learningPath?.estimatedDestinationHeight && goal.trim()
+    ? {
+        title: goal.trim(),
+        height: learningPath.estimatedDestinationHeight,
+        reason: learningPath.destinationHeightReason || "Estimated from the gap between your current foundation and the destination.",
+      }
+    : undefined;
+
+  const focusLevel = focusNode ? (mode === "tree" ? -focusNode.depth : focusNode.depth) : 0;
+
+  const renderCompactRow = (items: ConceptNode[], direction: "up" | "down") => (
+    <div className={`${styles.compactRow} ${direction === "up" ? styles.rowUp : styles.rowDown}`}>
+      {items.map((node, index) => (
+        <CompactNode
+          key={node.id}
+          node={node}
+          mode={mode}
+          level={mode === "tree" ? -node.depth : node.depth}
+          selected={selectedNodeId === node.id}
+          recommended={Boolean(learningPath?.recommendedTitle === node.title)}
+          delay={index * 70}
+          onClick={() => onFocus(node.id)}
+        />
+      ))}
+    </div>
+  );
+
+  if (mode === "brick" && !focusNode) {
+    return (
+      <section className={`${styles.hierarchyStage} ${styles.brickStage}`}>
+        {destination ? <DestinationNode destination={destination} /> : null}
+        {destination ? <div className={styles.destinationGap}><span />Estimated Height +{destination.height}</div> : null}
+        {firstBrickLayer.length ? renderCompactRow(firstBrickLayer, "up") : null}
+        {firstBrickLayer.length && foundations.length ? <ConnectorBand count={Math.max(firstBrickLayer.length, foundations.length)} direction="up" /> : null}
+        {foundations.length ? (
+          <div className={styles.foundationBlock}>
+            <span className={styles.layerLabel}>Height 0 · Foundation</span>
+            {renderCompactRow(foundations, "down")}
+          </div>
+        ) : null}
+        {busyLabel ? <Buffer label={busyLabel} /> : null}
+      </section>
+    );
+  }
+
+  if (!focusNode) return null;
+
+  const focusCard = (
+    <KnowledgeNode
+      node={focusNode}
+      mode={mode}
+      level={focusLevel}
+      selected={selectedNodeId === focusNode.id}
+      recommended={Boolean(learningPath?.recommendedTitle === focusNode.title)}
+      recommendationReason={learningPath?.recommendedTitle === focusNode.title ? learningPath.recommendationReason : undefined}
+      explanation={explanations[focusNode.id]}
+      generated={generatedNodeIds.has(focusNode.id)}
+      busy={loadingNodeId === focusNode.id}
+      busyLabel={loadingNodeId === focusNode.id ? busyLabel : undefined}
+      explanationLoading={explanationLoadingNodeId === focusNode.id}
+      resourceLoading={resourceLoadingNodeId === focusNode.id}
+      error={selectedNodeId === focusNode.id ? error : undefined}
+      warnings={selectedNodeId === focusNode.id ? warnings : []}
+      onExplain={() => onExplain(focusNode.id)}
+      onContinue={() => onContinue(focusNode.id)}
+      onFindResources={() => onFindResources(focusNode.id)}
+      onMarkKnown={() => onMarkKnown(focusNode.id)}
+      onTreeFromHere={() => onTreeFromHere(focusNode.id)}
+      onBrickFromHere={() => onBrickFromHere(focusNode.id)}
+      onDismissMessages={onDismissMessages}
+    />
+  );
+
+  return (
+    <section className={`${styles.hierarchyStage} ${mode === "tree" ? styles.treeStage : styles.brickStage}`}>
+      <div className={styles.focusToolbar}>
+        {focusParent ? <button type="button" onClick={onBack}>← {mode === "tree" ? "Previous branch" : "Previous layer"}</button> : <span />}
+        <span>{levelLabel(mode, focusLevel)}</span>
+      </div>
+
+      {mode === "tree" ? (
+        <>
+          {focusCard}
+          {children.length ? <ConnectorBand count={children.length} direction="down" /> : null}
+          {children.length ? renderCompactRow(children, "down") : null}
+        </>
+      ) : (
+        <>
+          {destination ? <DestinationNode destination={destination} /> : null}
+          {destination && children.length ? <div className={styles.destinationGap}><span />Destination remains above the generated layers</div> : null}
+          {children.length ? renderCompactRow(children, "up") : null}
+          {children.length ? <ConnectorBand count={children.length} direction="up" /> : null}
+          {focusCard}
+        </>
+      )}
+    </section>
+  );
+}
+
+function DestinationNode({ destination }: { destination: { title: string; height: number; reason: string } }) {
+  return (
+    <article className={styles.destinationNode}>
+      <span>Destination · Height +{destination.height}</span>
+      <strong>{destination.title}</strong>
+      <p>{destination.reason}</p>
+    </article>
+  );
+}
+
+function ConnectorBand({ count, direction }: { count: number; direction: "up" | "down" }) {
+  return (
+    <div className={`${styles.connectorBand} ${direction === "up" ? styles.connectorUp : styles.connectorDown}`} aria-hidden="true">
+      <span className={styles.connectorStem} />
+      <span className={styles.connectorBar} />
+      <div className={styles.connectorDrops}>
+        {Array.from({ length: Math.max(1, count) }, (_, index) => <i key={index} />)}
+      </div>
+    </div>
+  );
+}
+
+function CompactNode({ node, mode, level, selected, recommended, delay, onClick }: {
+  node: ConceptNode;
+  mode: PrimaryMode;
+  level: number;
+  selected: boolean;
+  recommended: boolean;
+  delay: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`${styles.compactNode} ${selected ? styles.compactSelected : ""}`}
+      style={{ animationDelay: `${delay}ms` }}
+      onClick={onClick}
+    >
+      <span>{levelLabel(mode, level)}</span>
+      <strong>{node.title}</strong>
+      <p>{node.shortDescription}</p>
+      <small>{statusText(node.knowledgeStatus)}{recommended ? " · Recommended" : ""}</small>
+    </button>
+  );
+}
+
 
 function SetupNode({
   mode,
@@ -978,14 +1241,12 @@ function SetupNode({
           </select>
         </label>
       </header>
-      <p className={styles.levelReason}>0 is your reference point. Every later depth or height is measured from what you put here.</p>
-
       <form className={styles.setupForm} onSubmit={onGenerate}>
         {mode === "tree" ? (
           <>
             <label>Tree action
               <select value={treeIntent} onChange={(event) => onTreeIntentChange(event.target.value as TreeIntent)}>
-                <option value="decompose">Break down</option>
+                <option value="decompose">Cut down</option>
                 <option value="trace-prerequisites">Trace roots</option>
                 <option value="analyze-question">Analyze a question</option>
               </select>
@@ -1038,7 +1299,7 @@ function SetupNode({
         {error ? <div className={styles.nodeNotice}><span>{error}</span><button type="button" onClick={onDismissError}>×</button></div> : null}
         {warnings.length ? <div className={styles.nodeNotice}><span>{warnings.join(" ")}</span><button type="button" onClick={onDismissWarnings}>×</button></div> : null}
         {busyLabel ? <Buffer label={busyLabel} /> : null}
-        <button type="submit" className={styles.primaryAction} disabled={Boolean(busyLabel)}>{busyLabel ? "Building…" : mode === "tree" ? TREE_INTENT_COPY[treeIntent].action : "Build Brick"}</button>
+        <button type="submit" className={styles.primaryAction} disabled={Boolean(busyLabel)}>{busyLabel ? (mode === "tree" ? "Branching…" : "Constructing…") : mode === "tree" ? TREE_INTENT_COPY[treeIntent].action : "Construct Brick"}</button>
       </form>
     </article>
   );
@@ -1048,14 +1309,10 @@ function KnowledgeNode({
   node,
   mode,
   level,
-  startingDifficulty,
   selected,
-  active,
   recommended,
   recommendationReason,
   explanation,
-  outgoing,
-  relatedNodes,
   generated,
   busy,
   busyLabel,
@@ -1063,7 +1320,7 @@ function KnowledgeNode({
   resourceLoading,
   error,
   warnings,
-  onSelect,
+  onExplain,
   onContinue,
   onFindResources,
   onMarkKnown,
@@ -1074,14 +1331,10 @@ function KnowledgeNode({
   node: ConceptNode;
   mode: PrimaryMode;
   level: number;
-  startingDifficulty: number;
   selected: boolean;
-  active: boolean;
   recommended: boolean;
   recommendationReason?: string;
   explanation?: AdaptiveExplanation;
-  outgoing: ConceptEdge[];
-  relatedNodes: ConceptNode[];
   generated: boolean;
   busy: boolean;
   busyLabel?: string;
@@ -1089,7 +1342,7 @@ function KnowledgeNode({
   resourceLoading: boolean;
   error?: string;
   warnings: string[];
-  onSelect: (loadExplanation: boolean) => void;
+  onExplain: () => void;
   onContinue: () => void;
   onFindResources: () => void;
   onMarkKnown: () => void;
@@ -1097,17 +1350,11 @@ function KnowledgeNode({
   onBrickFromHere: () => void;
   onDismissMessages: () => void;
 }) {
-  const axis = modeAxis(mode);
-  const connectionNames = outgoing.map((edge) => {
-    const target = relatedNodes.find((candidate) => candidate.id === edge.target);
-    return target ? `${connectionLabel(edge.relationshipType)} ${target.title}` : connectionLabel(edge.relationshipType);
-  });
-
   return (
-    <article className={`${styles.knowledgeNode} ${active ? styles.nodeActive : ""} ${selected ? styles.nodeSelected : ""}`} onClick={() => onSelect(false)}>
+    <article className={`${styles.knowledgeNode} ${selected ? styles.nodeSelected : ""}`}>
       <div className={styles.nodeMeta}>
-        <span>{axis} {level}</span>
-        <b>{level === 0 ? "Starting point" : mode === "tree" ? "More foundational" : "Builds further"}</b>
+        <span>{levelLabel(mode, level)}</span>
+        <b>{mode === "tree" ? "Focused branch" : "Focused brick"}</b>
       </div>
 
       <div className={styles.nodeHeading}>
@@ -1119,20 +1366,25 @@ function KnowledgeNode({
           <h2>{node.title}</h2>
         </div>
       </div>
+
       <p className={styles.nodeBrief}>{node.shortDescription}</p>
-      <p className={styles.levelReason}>{nodeLevelReason(mode, level, node, startingDifficulty)}</p>
       {recommendationReason ? <p className={styles.recommendation}>{recommendationReason}</p> : null}
 
       {busy ? <Buffer label={busyLabel} /> : null}
       {error || warnings.length ? (
         <div className={styles.nodeNotice}>
           <span>{[error, ...warnings].filter(Boolean).join(" ")}</span>
-          <button type="button" onClick={(event) => { event.stopPropagation(); onDismissMessages(); }}>×</button>
+          <button type="button" onClick={onDismissMessages}>×</button>
         </div>
       ) : null}
 
-      <details className={styles.nodeDetails} onToggle={(event) => { if (event.currentTarget.open) onSelect(true); }} onClick={(event) => event.stopPropagation()}>
-        <summary>{explanationLoading ? "Building detail…" : "More detail + resources"}</summary>
+      <details
+        className={styles.nodeDetails}
+        onToggle={(event) => {
+          if (event.currentTarget.open && !explanation) onExplain();
+        }}
+      >
+        <summary>{explanationLoading ? "Loading detail…" : "Open detail + resources"}</summary>
         <div className={styles.detailBody}>
           <section>
             <h3>Explanation</h3>
@@ -1141,33 +1393,53 @@ function KnowledgeNode({
             {explanation?.keyTakeaway ? <div className={styles.takeaway}>{explanation.keyTakeaway}</div> : null}
           </section>
 
-          {node.whyItMatters ? <section><h3>Why it matters</h3><p>{node.whyItMatters}</p></section> : null}
+          {node.whyItMatters ? <section><h3>Why this node matters</h3><p>{node.whyItMatters}</p></section> : null}
 
           <div className={styles.detailGrid}>
-            <section><h3>Prerequisites</h3>{node.prerequisites.length ? <ul>{node.prerequisites.slice(0, 6).map((item) => <li key={item}>{item}</li>)}</ul> : <p>None listed yet.</p>}</section>
-            <section><h3>What it unlocks</h3>{node.whatItUnlocks?.length ? <ul>{node.whatItUnlocks.slice(0, 6).map((item) => <li key={item}>{item}</li>)}</ul> : <p>Continue from this node to find out.</p>}</section>
+            <section>
+              <h3>Prerequisites</h3>
+              {node.prerequisites.length ? <ul>{node.prerequisites.slice(0, 6).map((item) => <li key={item}>{item}</li>)}</ul> : <p>None listed yet.</p>}
+            </section>
+            <section>
+              <h3>{mode === "tree" ? "What this branch reveals" : "What this brick unlocks"}</h3>
+              {node.whatItUnlocks?.length ? <ul>{node.whatItUnlocks.slice(0, 6).map((item) => <li key={item}>{item}</li>)}</ul> : <p>{mode === "tree" ? "Branch this node to cut it one level deeper." : "Construct the next layer to see what becomes reachable."}</p>}
+            </section>
           </div>
 
-          {connectionNames.length ? <section><h3>Connections in this map</h3><div className={styles.connectionChips}>{connectionNames.map((label) => <span key={label}>{label}</span>)}</div></section> : null}
-
           <section>
-            <div className={styles.resourceHeader}><h3>Resources</h3><button type="button" onClick={onFindResources} disabled={resourceLoading}>{resourceLoading ? "Finding…" : node.resources.length ? "Refresh" : "Find resources"}</button></div>
+            <div className={styles.resourceHeader}>
+              <h3>Resources</h3>
+              <button type="button" onClick={onFindResources} disabled={resourceLoading}>
+                {resourceLoading ? "Finding…" : node.resources.length ? "Refresh" : "Find resources"}
+              </button>
+            </div>
             {node.resources.length ? (
-              <div className={styles.resources}>{node.resources.map((resource) => <a key={resource.url} href={resource.url} target="_blank" rel="noreferrer"><strong>{resource.title}</strong><span>{resource.source} · {resource.type}</span></a>)}</div>
+              <div className={styles.resources}>
+                {node.resources.map((resource) => (
+                  <a key={resource.url} href={resource.url} target="_blank" rel="noreferrer">
+                    <strong>{resource.title}</strong>
+                    <span>{resource.source} · {resource.type}</span>
+                  </a>
+                ))}
+              </div>
             ) : <p>Resources are loaded only when you ask for them.</p>}
           </section>
 
           <div className={styles.secondaryActions}>
             {node.knowledgeStatus !== "known" ? <button type="button" onClick={onMarkKnown}>Mark known</button> : null}
-            <button type="button" onClick={onTreeFromHere}>Tree from here</button>
-            <button type="button" onClick={onBrickFromHere}>Brick from here</button>
+            {mode !== "tree" ? <button type="button" onClick={onTreeFromHere}>Open as new Tree</button> : null}
+            {mode !== "brick" ? <button type="button" onClick={onBrickFromHere}>Open as new Brick</button> : null}
           </div>
         </div>
       </details>
 
-      <button type="button" className={styles.continueButton} onClick={(event) => { event.stopPropagation(); onContinue(); }} disabled={busy}>
-        {busy ? "Building…" : generated ? "Show next nodes" : mode === "tree" ? "Continue downward" : "Continue upward"}
-        <span aria-hidden="true">↓</span>
+      <button type="button" className={styles.continueButton} onClick={onContinue} disabled={busy}>
+        {busy
+          ? mode === "tree" ? "Branching…" : "Constructing…"
+          : generated
+            ? mode === "tree" ? "Show branch children" : "Show next layer"
+            : mode === "tree" ? "Branch this node" : "Construct next layer"}
+        <span aria-hidden="true">{mode === "tree" ? "↓" : "↑"}</span>
       </button>
     </article>
   );
@@ -1176,49 +1448,182 @@ function KnowledgeNode({
 function NavigatorDrawer({
   open,
   mode,
+  workspaces,
+  activeWorkspaceId,
   nodes,
   edges,
-  baseDepth,
   activeNodeId,
+  learningPath,
+  goal,
   hasSession,
   onClose,
+  onSwitchWorkspace,
   onTeleport,
   onDownload,
   onNew,
 }: {
   open: boolean;
   mode: PrimaryMode;
+  workspaces: WorkspaceSnapshot[];
+  activeWorkspaceId?: string;
   nodes: ConceptNode[];
   edges: ConceptEdge[];
-  baseDepth: number;
   activeNodeId?: string;
+  learningPath?: LearningPathProposal;
+  goal: string;
   hasSession: boolean;
   onClose: () => void;
+  onSwitchWorkspace: (id: string) => void;
   onTeleport: (id: string) => void;
   onDownload: () => void;
   onNew: () => void;
 }) {
-  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const treeWorkspaces = workspaces.filter((workspace) => workspace.mode === "tree");
+  const brickWorkspaces = workspaces.filter((workspace) => workspace.mode === "brick");
+
   return (
     <aside className={`${styles.navigator} ${open ? styles.navigatorOpen : ""}`} aria-hidden={!open}>
-      <header><strong>{mode === "tree" ? "Tree map" : "Brick map"}</strong><button type="button" onClick={onClose}>×</button></header>
-      <div className={styles.mapTable}>
-        <div className={styles.mapHead}><span>{modeAxis(mode)}</span><span>Node</span><span>Connects</span></div>
-        {nodes.length ? nodes.map((node) => {
-          const outgoing = edges.filter((edge) => edge.source === node.id);
-          return (
-            <button key={node.id} type="button" className={node.id === activeNodeId ? styles.mapRowActive : ""} onClick={() => onTeleport(node.id)}>
-              <span>{Math.max(0, node.depth - baseDepth)}</span>
-              <strong>{node.title}</strong>
-              <small>{outgoing.length ? outgoing.map((edge) => nodeById.get(edge.target)?.title).filter(Boolean).join(", ") : "—"}</small>
+      <header>
+        <div>
+          <small>Workspace map</small>
+          <strong>{mode === "tree" ? "Tree" : "Brick"}</strong>
+        </div>
+        <button type="button" onClick={onClose}>×</button>
+      </header>
+
+      <section className={styles.workspaceSwitcher}>
+        <div>
+          <span>Tree maps</span>
+          {treeWorkspaces.length ? treeWorkspaces.map((workspace) => (
+            <button
+              key={workspace.id}
+              type="button"
+              className={workspace.id === activeWorkspaceId ? styles.workspaceActive : ""}
+              onClick={() => onSwitchWorkspace(workspace.id)}
+            >
+              {workspace.name}
             </button>
-          );
-        }) : <p className={styles.emptyMap}>Your map will appear here.</p>}
-      </div>
+          )) : <small>No Trees yet.</small>}
+        </div>
+        <div>
+          <span>Brick maps</span>
+          {brickWorkspaces.length ? brickWorkspaces.map((workspace) => (
+            <button
+              key={workspace.id}
+              type="button"
+              className={workspace.id === activeWorkspaceId ? styles.workspaceActive : ""}
+              onClick={() => onSwitchWorkspace(workspace.id)}
+            >
+              {workspace.name}
+            </button>
+          )) : <small>No Bricks yet.</small>}
+        </div>
+      </section>
+
+      <MiniGraphMap
+        mode={mode}
+        nodes={nodes}
+        edges={edges}
+        activeNodeId={activeNodeId}
+        destination={mode === "brick" && learningPath?.estimatedDestinationHeight && goal.trim()
+          ? { title: goal.trim(), height: learningPath.estimatedDestinationHeight }
+          : undefined}
+        onTeleport={onTeleport}
+      />
+
       <footer>
-        <button type="button" onClick={onNew}>New map</button>
+        <button type="button" onClick={onNew}>New {mode === "tree" ? "Tree" : "Brick"}</button>
         <button type="button" disabled={!hasSession} onClick={onDownload}>Download session</button>
       </footer>
     </aside>
   );
 }
+
+function MiniGraphMap({ mode, nodes, edges, activeNodeId, destination, onTeleport }: {
+  mode: PrimaryMode;
+  nodes: ConceptNode[];
+  edges: ConceptEdge[];
+  activeNodeId?: string;
+  destination?: { title: string; height: number };
+  onTeleport: (id: string) => void;
+}) {
+  if (!nodes.length) return <p className={styles.emptyMap}>Your map will appear here.</p>;
+
+  const grouped = new Map<number, ConceptNode[]>();
+  for (const node of nodes) {
+    const items = grouped.get(node.depth) ?? [];
+    items.push(node);
+    grouped.set(node.depth, items);
+  }
+  for (const items of grouped.values()) items.sort((a, b) => a.title.localeCompare(b.title));
+
+  const depths = [...grouped.keys()].sort((a, b) => mode === "tree" ? a - b : b - a);
+  const destinationOffset = destination ? 74 : 0;
+  const rowGap = 92;
+  const width = 1000;
+  const positions = new Map<string, { x: number; y: number }>();
+
+  depths.forEach((depth, rowIndex) => {
+    const row = grouped.get(depth) ?? [];
+    row.forEach((node, index) => {
+      positions.set(node.id, {
+        x: ((index + 1) / (row.length + 1)) * width,
+        y: destinationOffset + 42 + rowIndex * rowGap,
+      });
+    });
+  });
+
+  const height = Math.max(170, destinationOffset + depths.length * rowGap + 54);
+
+  return (
+    <div className={styles.miniGraph} style={{ height }}>
+      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
+        {edges.map((edge) => {
+          const source = positions.get(edge.source);
+          const target = positions.get(edge.target);
+          if (!source || !target) return null;
+          const midY = (source.y + target.y) / 2;
+          return (
+            <path
+              key={edge.id}
+              d={`M ${source.x} ${source.y} C ${source.x} ${midY}, ${target.x} ${midY}, ${target.x} ${target.y}`}
+              className={styles.miniEdge}
+            />
+          );
+        })}
+        {destination && depths.length ? (
+          <path
+            d={`M 500 42 L 500 ${destinationOffset + 18}`}
+            className={`${styles.miniEdge} ${styles.miniEdgeDashed}`}
+          />
+        ) : null}
+      </svg>
+
+      {destination ? (
+        <div className={styles.miniDestination}>
+          <small>+{destination.height}</small>
+          <strong>{destination.title}</strong>
+        </div>
+      ) : null}
+
+      {nodes.map((node) => {
+        const position = positions.get(node.id);
+        if (!position) return null;
+        return (
+          <button
+            key={node.id}
+            type="button"
+            className={`${styles.miniNode} ${node.id === activeNodeId ? styles.miniNodeActive : ""}`}
+            style={{ left: `${position.x / 10}%`, top: position.y }}
+            onClick={() => onTeleport(node.id)}
+            title={node.shortDescription}
+          >
+            <small>{mode === "tree" ? -node.depth : node.depth > 0 ? `+${node.depth}` : "0"}</small>
+            <span>{node.title}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+

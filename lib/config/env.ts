@@ -15,6 +15,7 @@ const optionalNumber = (defaultValue: number, min: number, max: number) =>
 export const ProviderSchema = z.enum([
   "groq",
   "gemini",
+  "cloudflare",
   "openrouter",
   "openai-compatible",
 ]);
@@ -35,6 +36,10 @@ const EnvSchema = z.object({
 
   GEMINI_API_KEY: optionalText(z.string()),
   GEMINI_MODEL: optionalText(z.string()),
+
+  CLOUDFLARE_ACCOUNT_ID: optionalText(z.string()),
+  CLOUDFLARE_API_TOKEN: optionalText(z.string()),
+  CLOUDFLARE_MODEL: optionalText(z.string()),
 
   OPENROUTER_API_KEY: optionalText(z.string()),
   OPENROUTER_MODEL: optionalText(z.string()),
@@ -58,7 +63,28 @@ const EnvSchema = z.object({
   LOCAL_RAG_BASE_URL: optionalText(z.string().url()),
 
   AGENT_MAX_STEPS: optionalNumber(5, 1, 12),
-  AGENT_MAX_REVISIONS: optionalNumber(2, 0, 4),
+  AGENT_MAX_REVISIONS: optionalNumber(1, 0, 4),
+
+  // Keep structured responses compact. Groq's free gpt-oss models currently have
+  // an 8K TPM limit, so large completions can exhaust the minute budget quickly.
+  LLM_MAX_OUTPUT_TOKENS: optionalNumber(1000, 384, 4000),
+
+  // A 429 without Retry-After starts a provider circuit breaker. Repeated 429s
+  // increase the cooldown exponentially up to ten minutes.
+  LLM_PROVIDER_COOLDOWN_SECONDS: optionalNumber(90, 5, 600),
+
+  // These are deliberately conservative local-instance pacing values. Auto mode
+  // chooses another ready provider instead of waiting when possible.
+  LLM_MIN_PROVIDER_INTERVAL_MS: optionalNumber(5000, 0, 30_000),
+  GROQ_MIN_PROVIDER_INTERVAL_MS: optionalNumber(10_000, 0, 30_000),
+  GEMINI_MIN_PROVIDER_INTERVAL_MS: optionalNumber(4000, 0, 30_000),
+  CLOUDFLARE_MIN_PROVIDER_INTERVAL_MS: optionalNumber(3000, 0, 30_000),
+  OPENROUTER_MIN_PROVIDER_INTERVAL_MS: optionalNumber(6000, 0, 30_000),
+
+  // These default to deterministic logic so ordinary graph/resource actions do
+  // not spend an extra model call unless explicitly requested.
+  PEDAGOGY_VALIDATION_MODE: z.enum(["deterministic", "llm"]).default("deterministic"),
+  RESOURCE_PLANNING_MODE: z.enum(["deterministic", "llm"]).default("deterministic"),
 });
 
 export type AppEnv = z.infer<typeof EnvSchema>;
@@ -79,9 +105,10 @@ export function selectedProviderHasCredentials(provider?: ProviderName): boolean
     if (env.LLM_PROVIDER === "auto") {
       return Boolean(
         env.GROQ_API_KEY ||
-        env.GEMINI_API_KEY ||
-        env.OPENROUTER_API_KEY ||
-        (env.LLM_BASE_URL && env.LLM_API_KEY && env.LLM_MODEL),
+          env.GEMINI_API_KEY ||
+          (env.CLOUDFLARE_ACCOUNT_ID && env.CLOUDFLARE_API_TOKEN) ||
+          env.OPENROUTER_API_KEY ||
+          (env.LLM_BASE_URL && env.LLM_API_KEY && env.LLM_MODEL),
       );
     }
     provider = env.LLM_PROVIDER;
@@ -92,10 +119,11 @@ export function selectedProviderHasCredentials(provider?: ProviderName): boolean
       return Boolean(env.GROQ_API_KEY);
     case "gemini":
       return Boolean(env.GEMINI_API_KEY);
+    case "cloudflare":
+      return Boolean(env.CLOUDFLARE_ACCOUNT_ID && env.CLOUDFLARE_API_TOKEN);
     case "openrouter":
       return Boolean(env.OPENROUTER_API_KEY);
     case "openai-compatible":
       return Boolean(env.LLM_BASE_URL && env.LLM_API_KEY && env.LLM_MODEL);
   }
-  return false;
 }

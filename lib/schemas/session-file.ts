@@ -40,6 +40,29 @@ const AdaptiveExplanationSchema = z.object({
   })).optional(),
 });
 
+export const PortableWorkspaceStateSchema = z.object({
+  id: z.string().min(1).max(160),
+  name: z.string().min(1).max(300),
+  mode: PrimaryModeSchema,
+  treeIntent: TreeIntentSchema,
+  brickIntent: BrickIntentSchema,
+  topic: z.string().max(300),
+  knownInput: z.string().max(12_000),
+  goal: z.string().max(700),
+  nodes: z.array(ConceptNodeSchema).max(1200),
+  edges: z.array(ConceptEdgeSchema).max(3000),
+  levels: z.array(GraphLevelDescriptorSchema).max(40),
+  expandedNodeIds: z.array(z.string()).max(1200),
+  selectedNodeId: z.string().optional(),
+  focusedNodeId: z.string().optional(),
+  viewRootId: z.string().optional(),
+  learningPath: LearningPathProposalSchema.optional(),
+  trace: z.array(TraceEventSchema).max(150),
+  explanations: z.record(z.string(), AdaptiveExplanationSchema).default({}),
+  createdAt: z.number().int().nonnegative(),
+});
+export type PortableWorkspaceState = z.infer<typeof PortableWorkspaceStateSchema>;
+
 export const PortableSessionStateSchema = z.object({
   mode: PrimaryModeSchema,
   treeIntent: TreeIntentSchema,
@@ -59,6 +82,8 @@ export const PortableSessionStateSchema = z.object({
   learningPath: LearningPathProposalSchema.optional(),
   trace: z.array(TraceEventSchema).max(150),
   explanations: z.record(z.string(), AdaptiveExplanationSchema).default({}),
+  workspaces: z.array(PortableWorkspaceStateSchema).max(40).default([]),
+  activeWorkspaceId: z.string().optional(),
 });
 export type PortableSessionState = z.infer<typeof PortableSessionStateSchema>;
 

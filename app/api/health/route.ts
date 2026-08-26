@@ -4,7 +4,7 @@ import { getLLMProviderAttempts } from "@/lib/llm/factory";
 
 export const runtime = "nodejs";
 
-const PROVIDERS: ProviderName[] = ["groq", "gemini", "openrouter", "openai-compatible"];
+const PROVIDERS: ProviderName[] = ["groq", "gemini", "cloudflare", "openrouter", "openai-compatible"];
 const ROUTED_ROLES = [
   "concept_architect",
   "learning_path",
@@ -29,13 +29,18 @@ export async function GET() {
   return Response.json({
     ok: true,
     app: "Brick Tree",
-    version: "0.7.0",
+    version: "0.8.0",
     runtime: "vercel-stateless",
     persistentStorage: false,
     llmProvider: env.LLM_PROVIDER,
     llmConfigured: configuredProviders.length > 0,
     configuredProviders,
     routing,
+    rateProtection: {
+      cooldownSeconds: env.LLM_PROVIDER_COOLDOWN_SECONDS,
+      maxOutputTokens: env.LLM_MAX_OUTPUT_TOKENS,
+      deterministicPedagogyValidation: env.PEDAGOGY_VALIDATION_MODE === "deterministic",
+    },
     resources: {
       wikipedia: true,
       crossref: true,

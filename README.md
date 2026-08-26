@@ -2,51 +2,87 @@
 
 **Cut down complex ideas and build up new ones.**
 
-Brick Tree is a stateless learning map for two directions of learning:
+Brick Tree is a stateless learning map with two separate directions:
 
-- **Tree** — break a concept down, trace its prerequisites, or unpack a broad question.
-- **Brick** — start from what you already know and find realistic next concepts, with or without a destination.
+- **Tree** cuts a concept into branches, traces prerequisites, or examines a broad question.
+- **Brick** starts from known foundations and constructs reachable knowledge upward, either by exploring or building toward a destination.
 
-## How the interface works
+## Interaction model
 
-The starting node is always **0**.
-
-- Tree measures **Depth** from the starting concept.
-- Brick measures **Height** from the starting knowledge.
-- Scrolling moves between nodes; the workspace is intentionally fixed and cannot be dragged or panned.
-- The focused node grows into view while later nodes stay smaller below it.
-- Each node contains its short description, level explanation, deeper explanation, resources, and continue controls.
-- The map drawer lists current nodes and connections and can jump directly to any node.
-
-The landing page is split between Tree green and Brick orange. The split **Begin** control becomes the Tree/Brick switch at the top of the workspace.
-
-## Learning modes
+Tree and Brick maps are independent workspaces. You can create several of each and switch between them from the map drawer without changing another map.
 
 ### Tree
 
-- **Break down** — conceptual parts using `contains` edges.
-- **Trace roots** — prerequisites using `prerequisite` / `builds-on` edges.
-- **Analyze a question** — specific reasoning lenses using `examines` edges.
+```text
+              node
+        /      |      \
+      node    node    node
+       |
+    deeper branch
+```
 
-### Brick
+- The starting concept is **Depth 0**.
+- Every generated layer moves one reasonable conceptual step downward: `-1`, `-2`, `-3`, and so on.
+- The focused node stays above its direct children.
+- Sibling branches remain visible side by side.
+- Click a child to focus it, then branch only that node.
+- Tree uses cutting, branching, tracing, and examining language.
 
-- **Explore** — useful next concepts from existing knowledge.
-- **Destination** — ranked next concepts toward a goal.
+### Brick — Explore
 
-## Agents
+```text
+       next layer
+       |   |   |
+   foundation bricks
+```
 
-Brick Tree uses four bounded agents:
+- Supplied knowledge is **Height 0**.
+- Brick may suggest genuinely missing foundation bricks alongside the learner's supplied foundations.
+- Every new layer moves only one realistically learnable step upward: `+1`, `+2`, `+3`, and so on.
+- Explore has no fixed destination and surfaces useful reachable directions.
 
-1. **Concept Architect** — Tree structure and question analysis.
-2. **Learning Path Agent** — Brick directions and recommendations.
-3. **Pedagogy Validator** — checks intent, learner fit, difficulty, and source fidelity.
-4. **Resource Agent** — plans resource searches.
+### Brick — Destination
 
-The runtime validates structured model output, limits retries and revisions, and falls back between configured providers. It does not expose chain-of-thought.
+```text
+       destination
+           ||
+     future gap/layers
+         |   |
+      next layer
+       |   |   |
+   foundation bricks
+```
+
+- The destination is estimated at an absolute height measured from Height 0.
+- Brick does not fabricate all intermediate layers at once.
+- Each click constructs only the next reasonable layer toward the destination.
+
+## Node behavior
+
+Nodes stay compact until focused. Compact nodes show the concept name and brief description. A focused node expands to include explanation, prerequisites, why it matters, resources, and the control to branch or construct the next layer.
+
+There is no draggable graph canvas and no scroll-based graph navigation. Navigation is click-to-focus. The left Depth/Height rail is clickable and explains what each signed level means.
+
+The map drawer renders the current workspace as a connected mini hierarchy and can teleport directly to a node.
+
+## Rate-limit protection
+
+Brick Tree is designed for free/free-tier model APIs, so provider limits are treated as normal runtime conditions rather than fatal errors.
+
+- `LLM_PROVIDER=auto` uses only providers with complete credentials.
+- Providers are spaced independently to reduce bursts.
+- A provider that returns `429`, times out, or returns a temporary `5xx` is cooled down and skipped while another configured provider is tried.
+- `Retry-After` is respected when supplied.
+- Gemini uses JSON Object mode first to avoid spending an extra compatibility call on JSON Schema negotiation.
+- Normal pedagogy checks are deterministic by default, avoiding an extra validator LLM call on every graph generation.
+- Output is capped to reduce token-per-minute pressure.
+- Groq, Gemini, Cloudflare Workers AI, OpenRouter, and one generic OpenAI-compatible endpoint can share the workload.
+
+In-memory cooldown state is intentionally stateless and applies per warm server instance. Provider account quotas are still external limits and cannot be made unlimited by application code.
 
 ## LLM setup
 
-At least one hosted provider is required for AI actions.
+At least one provider is required for AI actions. Two or three independent providers are recommended for public deployments.
 
 ```env
 LLM_PROVIDER=auto
@@ -57,24 +93,17 @@ GROQ_MODEL=openai/gpt-oss-120b
 GEMINI_API_KEY=
 GEMINI_MODEL=gemini-3.5-flash
 
+# Optional additional free quota pool
+CLOUDFLARE_ACCOUNT_ID=
+CLOUDFLARE_API_TOKEN=
+CLOUDFLARE_MODEL=@cf/openai/gpt-oss-20b
+
+# Optional last fallback
 OPENROUTER_API_KEY=
 OPENROUTER_MODEL=openrouter/free
-
-AGENT_MAX_STEPS=5
-AGENT_MAX_REVISIONS=2
 ```
 
-`auto` only includes providers that actually have credentials. Default role preferences are:
-
-| Role | Order |
-| --- | --- |
-| Concept Architect | Gemini → Groq → OpenRouter → compatible endpoint |
-| Learning Path | Groq → Gemini → OpenRouter → compatible endpoint |
-| Pedagogy Validator | OpenRouter → Gemini → Groq → compatible endpoint |
-| Resource Agent | Groq → OpenRouter → Gemini → compatible endpoint |
-| Explanations | Gemini → Groq → OpenRouter → compatible endpoint |
-
-A generic OpenAI-compatible provider can be added with:
+Optional generic OpenAI-compatible provider:
 
 ```env
 LLM_BASE_URL=
@@ -82,11 +111,46 @@ LLM_API_KEY=
 LLM_MODEL=
 ```
 
-Those three variables are not required unless that provider is configured.
+Optional role overrides:
 
-## Optional resources
+```env
+CONCEPT_ARCHITECT_PROVIDER=
+LEARNING_PATH_PROVIDER=
+PEDAGOGY_VALIDATOR_PROVIDER=
+RESOURCE_AGENT_PROVIDER=
+EXPLANATION_PROVIDER=
+```
 
-Keyless sources remain available. Optional environment variables add coverage:
+Valid values are:
+
+```text
+groq
+gemini
+cloudflare
+openrouter
+openai-compatible
+```
+
+## Free-tier protection defaults
+
+```env
+AGENT_MAX_STEPS=5
+AGENT_MAX_REVISIONS=1
+LLM_MAX_OUTPUT_TOKENS=1600
+LLM_PROVIDER_COOLDOWN_SECONDS=75
+LLM_MIN_PROVIDER_INTERVAL_MS=2500
+GROQ_MIN_PROVIDER_INTERVAL_MS=7000
+GEMINI_MIN_PROVIDER_INTERVAL_MS=2500
+CLOUDFLARE_MIN_PROVIDER_INTERVAL_MS=2000
+OPENROUTER_MIN_PROVIDER_INTERVAL_MS=5000
+PEDAGOGY_VALIDATION_MODE=deterministic
+```
+
+Set `PEDAGOGY_VALIDATION_MODE=llm` only when you explicitly want every candidate layer to use the LLM validator. It consumes additional quota.
+
+## Resource APIs
+
+Optional resource integrations:
 
 ```env
 TAVILY_API_KEY=
@@ -94,47 +158,19 @@ BRAVE_SEARCH_API_KEY=
 SEMANTIC_SCHOLAR_API_KEY=
 OPENALEX_API_KEY=
 APP_CONTACT_EMAIL=
-LOCAL_RAG_BASE_URL=
 ```
 
-Do not point a Vercel deployment at localhost or a private-LAN RAG service.
-
-## Documents
-
-`POST /api/documents` accepts:
-
-- PDF
-- DOCX
-- TXT
-- Markdown
-- CSV / TSV
-- JSON
-
-Files are parsed for the live browser session and are not persisted by Brick Tree. Individual files are capped at 4 MiB and the route also guards the complete multipart request against Vercel's function payload limit.
+Keyless sources remain available where supported.
 
 ## Sessions
 
-Brick Tree has no database or account system. Live state stays in React memory.
+Brick Tree does not persist server-side user state. A `.bricktree.json` session can contain several independent Tree and Brick workspaces together with the learner profile, uploaded source text, explanations, and trace metadata.
 
-**Download session** exports a `.bricktree.json` file containing the semantic graph, traversal state, learner settings, recommendations, cached explanations, trace events, and extracted source text. **Upload session** validates and restores it later.
+## Documents
 
-Treat exported session files as private when they contain private source material.
+`POST /api/documents` accepts PDF, DOCX, TXT, Markdown, CSV, TSV, and JSON. Uploaded content is parsed for the live browser session and is not persisted by the server.
 
-## Runtime dependencies
-
-Brick Tree 0.7.0 has six runtime packages:
-
-| Package | Purpose |
-| --- | --- |
-| `next` | App Router and Vercel runtime |
-| `react` / `react-dom` | UI runtime |
-| `zod` | API, LLM, and session validation |
-| `pdf-parse` | PDF extraction |
-| `mammoth` | DOCX extraction |
-
-The fixed scroll workspace uses native React, CSS Scroll Snap, CSS transitions, and browser APIs. There is no graph-dragging library, animation library, CSS framework, HTTP wrapper, LLM SDK, database, ORM, auth package, object-storage SDK, or vector-database SDK.
-
-## Run locally
+## Local setup
 
 Use Node.js 22.x.
 
@@ -147,25 +183,26 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-`npm run check` runs TypeScript, ESLint, Vitest, and the production Next.js build.
-
 ## Vercel
 
-1. Push the repository to GitHub.
-2. Import it into Vercel using the Next.js preset.
-3. Use Node.js 22.x.
-4. Add the required environment variables in **Settings → Environment Variables**.
-5. Apply provider variables to Production and Preview when both should run AI workflows.
-6. Deploy and verify `/`, `/api/health`, one Tree flow, one Brick flow, an explanation, and a small document upload.
+Brick Tree uses the standard Next.js Node runtime and requires no database, persistent filesystem, Blob store, background worker, Docker service, or local model in production.
 
-The app requires no database, persistent filesystem, Blob store, background worker, Docker container, or local service in production.
+Add real secrets under **Vercel → Project → Settings → Environment Variables**. Keep `.env.example` secret-free.
 
-## API
+After deployment verify:
 
-- `POST /api/agent` — Tree, Brick, explanation, and resource actions.
-- `POST /api/documents` — document extraction.
-- `GET /api/health` — safe provider/model routing and capability status without secrets.
-
-## Privacy
-
-Brick Tree itself is stateless. Requests sent to configured LLM/search providers are handled under those providers' own policies. Keep provider keys server-side and never expose them through `NEXT_PUBLIC_*` variables.
+```text
+/
+/api/health
+Tree Cut Down
+Tree Trace Roots
+Tree Analyze a Question
+Brick Explore
+Brick Destination
+one deeper Tree branch
+one higher Brick layer
+one explanation
+one resource lookup
+one document upload
+session export/import
+```

@@ -11,7 +11,7 @@ describe("Vercel deployment configuration", () => {
       engines: { node: string };
       dependencies: Record<string, string>;
     };
-    expect(pkg.version).toBe("0.7.0");
+    expect(pkg.version).toBe("0.8.0");
     expect(pkg.engines.node).toBe("22.x");
     expect(pkg.dependencies.next).toBe("16.3.3");
     expect(Object.keys(pkg.dependencies)).toHaveLength(6);

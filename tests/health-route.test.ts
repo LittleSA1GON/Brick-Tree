@@ -18,6 +18,9 @@ describe("GET /api/health", () => {
     process.env.GROQ_MODEL = "openai/gpt-oss-120b";
     process.env.GEMINI_API_KEY = "gemini-health-secret";
     process.env.GEMINI_MODEL = "gemini-3.5-flash";
+    delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    delete process.env.CLOUDFLARE_API_TOKEN;
+    delete process.env.OPENROUTER_API_KEY;
     delete process.env.LLM_API_KEY;
     delete process.env.LLM_BASE_URL;
     delete process.env.LLM_MODEL;
