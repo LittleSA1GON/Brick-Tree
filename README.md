@@ -1,144 +1,171 @@
 # Brick Tree
 
-**Break down what you don't understand. Build up what you do.**
+**Cut down complex ideas and build up new ones.**
 
-Brick Tree is a stateless, Vercel-ready learning graph. **Tree** breaks down concepts, traces prerequisites, or unpacks open-ended questions; **Brick** moves from known concepts toward reachable next knowledge or a destination. Both traverse the same typed graph.
+Brick Tree is a stateless learning map for two directions of learning:
 
-## Runtime and continuation
+- **Tree** — break a concept down, trace its prerequisites, or unpack a broad question.
+- **Brick** — start from what you already know and find realistic next concepts, with or without a destination.
 
-Brick Tree stores no user data. Live state exists only in React memory. Vercel handles request-time computation and retains no graph, user, or document state.
+## How the interface works
 
-```text
-Browser state ──► Vercel API ──► LLM / search APIs
-      │
-      └──► Download .bricktree.json ──► user-owned continuation file
-```
+The starting node is always **0**.
 
-**Download session** exports graph semantics, difficulty layers, learner configuration, navigation state, recommendations, cached explanations, agent trace, and extracted document text/provenance. **Upload session** validates and restores that file. Visual coordinates and temporary animation state are recalculated.
+- Tree measures **Depth** from the starting concept.
+- Brick measures **Height** from the starting knowledge.
+- Scrolling moves between nodes; the workspace is intentionally fixed and cannot be dragged or panned.
+- The focused node grows into view while later nodes stay smaller below it.
+- Each node contains its short description, level explanation, deeper explanation, resources, and continue controls.
+- The map drawer lists current nodes and connections and can jump directly to any node.
 
-PDF/DOCX/TXT/MD/CSV/TSV/JSON uploads are parsed by `POST /api/documents`; the extracted result is returned to the browser and is not persisted by the server.
+The landing page is split between Tree green and Brick orange. The split **Begin** control becomes the Tree/Brick switch at the top of the workspace.
 
-## Learning model
+## Learning modes
 
-Tree intents:
+### Tree
 
-- **Break Down** — conceptual components (`contains`).
-- **Trace to Roots** — supporting knowledge (`prerequisite` / `builds-on`), stopping at concepts the learner already knows.
-- **Analyze a Question** — open-ended or strategic questions split into specific reasoning lenses inspired by **Who / What / Why / Where / How** (and When when useful), connected by `examines` edges. Deeper expansion makes one lens more concrete rather than repeating generic 5W/H labels.
+- **Break down** — conceptual parts using `contains` edges.
+- **Trace roots** — prerequisites using `prerequisite` / `builds-on` edges.
+- **Analyze a question** — specific reasoning lenses using `examines` edges.
 
-Brick intents:
+### Brick
 
-- **Explore** — reachable next concepts without requiring a destination.
-- **Destination** — ranked next concepts toward an optional goal without generating a rigid curriculum.
-
-Every node includes a short description plus a 1–5 understanding-difficulty score, explanation, and factors. Peer nodes at one visual level should normally differ by no more than one difficulty point; the validator and deterministic checks enforce the rule.
+- **Explore** — useful next concepts from existing knowledge.
+- **Destination** — ranked next concepts toward a goal.
 
 ## Agents
 
-Four agents share one bounded runtime:
+Brick Tree uses four bounded agents:
 
-1. **Concept Architect** — decomposition, prerequisite structure, and open-question reasoning lenses.
-2. **Learning Path Agent** — reachable concepts and Recommended Next Brick.
-3. **Pedagogy Validator** — intent, difficulty, learner, and source-fidelity checks; can reject and request revision.
-4. **Resource Agent** — plans restricted learning-resource searches.
+1. **Concept Architect** — Tree structure and question analysis.
+2. **Learning Path Agent** — Brick directions and recommendations.
+3. **Pedagogy Validator** — checks intent, learner fit, difficulty, and source fidelity.
+4. **Resource Agent** — plans resource searches.
 
-The runtime enforces registered agents/tools, allowed handoffs, step/revision limits, schema validation, timeouts, and high-level trace events. It does not expose chain-of-thought.
+The runtime validates structured model output, limits retries and revisions, and falls back between configured providers. It does not expose chain-of-thought.
 
-## Graph implementation
+## LLM setup
 
-- `@xyflow/react` — interactive nodes/edges, pan/zoom, selection, viewport control.
-- `elkjs` — layered automatic layout for variable-size nodes and cross-links.
-- CSS/browser animation — entrance, subtle floating, edge emphasis, and reduced-motion behavior.
-
-Nodes are generated lazily. ELK recalculates positions after semantic changes; React Flow performs branch-aware camera fitting. Semantic graph data, not viewport coordinates, is the source of truth.
-
-## Sources and retrieval
-
-Source modes are **General**, **Prefer Uploaded**, and **Uploaded Only**. Uploaded-only claims must be supported by retrieved document sections, preserving document/section/page provenance when available.
-
-Resource tools use native `fetch`, avoiding API SDK dependencies:
-
-- Wikipedia/Wikimedia — no key.
-- Crossref — no key; `APP_CONTACT_EMAIL` enables responsible identification.
-- Tavily — optional web search when `TAVILY_API_KEY` is configured.
-- Optional local/remote RAG — enabled only when `LOCAL_RAG_BASE_URL` is configured.
-
-## LLM configuration
-
-Only one protocol implementation is maintained: OpenAI-compatible chat completions. Groq is a convenience configuration; Gemini, OpenRouter, and compatible local servers use the generic endpoint configuration.
+At least one hosted provider is required for AI actions.
 
 ```env
-# Default hosted path
-LLM_PROVIDER=groq
-GROQ_API_KEY=
-LLM_MODEL=openai/gpt-oss-20b
+LLM_PROVIDER=auto
 
-# Or a compatible hosted/local endpoint
-LLM_PROVIDER=openai-compatible
+GROQ_API_KEY=
+GROQ_MODEL=openai/gpt-oss-120b
+
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-3.5-flash
+
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=openrouter/free
+
+AGENT_MAX_STEPS=5
+AGENT_MAX_REVISIONS=2
+```
+
+`auto` only includes providers that actually have credentials. Default role preferences are:
+
+| Role | Order |
+| --- | --- |
+| Concept Architect | Gemini → Groq → OpenRouter → compatible endpoint |
+| Learning Path | Groq → Gemini → OpenRouter → compatible endpoint |
+| Pedagogy Validator | OpenRouter → Gemini → Groq → compatible endpoint |
+| Resource Agent | Groq → OpenRouter → Gemini → compatible endpoint |
+| Explanations | Gemini → Groq → OpenRouter → compatible endpoint |
+
+A generic OpenAI-compatible provider can be added with:
+
+```env
 LLM_BASE_URL=
 LLM_API_KEY=
 LLM_MODEL=
 ```
 
-Examples of compatible base URLs include Gemini's OpenAI-compatible endpoint, OpenRouter, Ollama/LM Studio/llama.cpp-compatible servers, and similar services. Provider-specific SDKs are intentionally not used.
+Those three variables are not required unless that provider is configured.
 
-Optional capabilities:
+## Optional resources
+
+Keyless sources remain available. Optional environment variables add coverage:
 
 ```env
 TAVILY_API_KEY=
+BRAVE_SEARCH_API_KEY=
+SEMANTIC_SCHOLAR_API_KEY=
+OPENALEX_API_KEY=
 APP_CONTACT_EMAIL=
 LOCAL_RAG_BASE_URL=
 ```
 
-A missing optional key disables only that optional capability. LLM credentials are needed only when an AI action is invoked.
+Do not point a Vercel deployment at localhost or a private-LAN RAG service.
+
+## Documents
+
+`POST /api/documents` accepts:
+
+- PDF
+- DOCX
+- TXT
+- Markdown
+- CSV / TSV
+- JSON
+
+Files are parsed for the live browser session and are not persisted by Brick Tree. Individual files are capped at 4 MiB and the route also guards the complete multipart request against Vercel's function payload limit.
+
+## Sessions
+
+Brick Tree has no database or account system. Live state stays in React memory.
+
+**Download session** exports a `.bricktree.json` file containing the semantic graph, traversal state, learner settings, recommendations, cached explanations, trace events, and extracted source text. **Upload session** validates and restores it later.
+
+Treat exported session files as private when they contain private source material.
 
 ## Runtime dependencies
 
-Brick Tree has **8 runtime packages**:
+Brick Tree 0.7.0 has six runtime packages:
 
-| Package | Reason retained |
+| Package | Purpose |
 | --- | --- |
-| `next` | App Router, server routes, Vercel runtime |
-| `react` / `react-dom` | Next.js UI runtime |
-| `@xyflow/react` | Interactive graph rendering and viewport behavior |
-| `elkjs` | Automatic hierarchical layout; React Flow intentionally does not supply a layout engine |
-| `zod` | Runtime validation of untrusted AI/API/session-file data and shared schema typing |
-| `pdf-parse` | PDF text/page/metadata extraction compatible with Next.js/Vercel |
-| `mammoth` | DOCX raw-text extraction |
+| `next` | App Router and Vercel runtime |
+| `react` / `react-dom` | UI runtime |
+| `zod` | API, LLM, and session validation |
+| `pdf-parse` | PDF extraction |
+| `mammoth` | DOCX extraction |
 
-There is no animation library, CSS framework, state library, HTTP wrapper, LLM SDK, agent framework, database/ORM, auth package, object-storage SDK, vector-database SDK, or icon package. Existing code uses React state, CSS, Web APIs, and native `fetch` instead.
+The fixed scroll workspace uses native React, CSS Scroll Snap, CSS transitions, and browser APIs. There is no graph-dragging library, animation library, CSS framework, HTTP wrapper, LLM SDK, database, ORM, auth package, object-storage SDK, or vector-database SDK.
 
-Development-only dependencies are TypeScript, ESLint + Next config, Vitest, and React/Node type definitions.
+## Run locally
 
-## API
-
-- `POST /api/agent` — stateless navigation, resource, and explanation actions.
-- `POST /api/documents` — parse one file, max 4 MB.
-- `GET /api/health` — runtime/provider status and `persistentStorage: false`.
-
-Mutating routes enforce same-origin requests and request-size limits. Provider secrets remain server-side.
-
-## Run
-
-The current PDF parser requires Node.js **20.16+** (or a supported Node 22+ release).
+Use Node.js 22.x.
 
 ```bash
 npm install
+cp .env.example .env.local
+npm run check
 npm run dev
 ```
 
-Full verification:
+Open `http://localhost:3000`.
 
-```bash
-npm run check
-```
-
-`check` runs TypeScript, ESLint, Vitest, and a production Next.js build.
+`npm run check` runs TypeScript, ESLint, Vitest, and the production Next.js build.
 
 ## Vercel
 
-Import the repository into Vercel, add the selected provider environment variables, and deploy. Production requires no database, Blob store, account system, persistent filesystem, Docker container, background worker, local model, or local RAG service.
+1. Push the repository to GitHub.
+2. Import it into Vercel using the Next.js preset.
+3. Use Node.js 22.x.
+4. Add the required environment variables in **Settings → Environment Variables**.
+5. Apply provider variables to Production and Preview when both should run AI workflows.
+6. Deploy and verify `/`, `/api/health`, one Tree flow, one Brick flow, an explanation, and a small document upload.
+
+The app requires no database, persistent filesystem, Blob store, background worker, Docker container, or local service in production.
+
+## API
+
+- `POST /api/agent` — Tree, Brick, explanation, and resource actions.
+- `POST /api/documents` — document extraction.
+- `GET /api/health` — safe provider/model routing and capability status without secrets.
 
 ## Privacy
 
-Brick Tree itself is stateless, but configured LLM/search providers process requests under their own policies. Exported `.bricktree.json` files can contain uploaded-source text and should be treated as private files.
+Brick Tree itself is stateless. Requests sent to configured LLM/search providers are handled under those providers' own policies. Keep provider keys server-side and never expose them through `NEXT_PUBLIC_*` variables.

@@ -1,5 +1,5 @@
 import { getEnv } from "@/lib/config/env";
-import { createLLMProvider } from "@/lib/llm/factory";
+import { createLLMProvider, getLLMProviderAttempts } from "@/lib/llm/factory";
 import { LLMConfigurationError, LLMResponseError, type LLMProvider } from "@/lib/llm/provider";
 import type { TraceCollector } from "@/lib/observability/trace";
 import type { ToolRegistry } from "@/lib/tools/registry";
@@ -24,17 +24,14 @@ export class AgentRuntime {
     trace: TraceCollector,
   ): Promise<AgentRunResult<TOutput>> {
     const agent = this.agents.get<TInput, TOutput>(agentName);
+    const env = getEnv();
     trace.add("agent_start", agent.description, { agent: agent.name });
 
-    const env = getEnv();
-    const attempts: Array<{ provider: typeof env.LLM_PROVIDER; model?: string }> = [
-      { provider: env.LLM_PROVIDER, model: env.LLM_MODEL },
-    ];
-    if (env.LLM_FALLBACK_PROVIDER) {
-      attempts.push({
-        provider: env.LLM_FALLBACK_PROVIDER,
-        model: env.LLM_FALLBACK_MODEL,
-      });
+    const attempts = getLLMProviderAttempts(agentName);
+    if (!attempts.length) {
+      throw new LLMConfigurationError(
+        "No configured LLM provider is available. Add a Groq, Gemini, or OpenRouter key, or configure a complete OpenAI-compatible endpoint.",
+      );
     }
 
     let lastError: unknown;
@@ -47,7 +44,8 @@ export class AgentRuntime {
         continue;
       }
 
-      for (let repairAttempt = 0; repairAttempt < Math.min(2, agent.maxSteps); repairAttempt += 1) {
+      const repairLimit = Math.min(1 + env.AGENT_MAX_REVISIONS, agent.maxSteps, env.AGENT_MAX_STEPS);
+      for (let repairAttempt = 0; repairAttempt < repairLimit; repairAttempt += 1) {
         try {
           trace.add("model_call", `${agent.name} requested structured output from ${provider.name}.`, {
             agent: agent.name,

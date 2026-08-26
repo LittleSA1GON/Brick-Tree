@@ -1,14 +1,18 @@
 import { parseLearningDocument } from "@/lib/documents/parser";
-import { assertSameOrigin } from "@/lib/utils/request";
+import { assertSameOrigin, requestBodyTooLarge } from "@/lib/utils/request";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const MAX_FILE_SIZE = 4 * 1024 * 1024;
+const MAX_REQUEST_SIZE = 4_400_000;
 
 export async function POST(request: Request) {
   try {
     assertSameOrigin(request);
+    if (requestBodyTooLarge(request, MAX_REQUEST_SIZE)) {
+      return Response.json({ ok: false, error: "The complete upload request is too large." }, { status: 413 });
+    }
     const form = await request.formData();
     const file = form.get("file");
     if (!(file instanceof File)) {

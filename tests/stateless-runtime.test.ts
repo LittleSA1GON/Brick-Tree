@@ -44,8 +44,6 @@ describe("stateless compact runtime", () => {
       dependencies: Record<string, string>;
     };
     expect(Object.keys(pkg.dependencies).sort()).toEqual([
-      "@xyflow/react",
-      "elkjs",
       "mammoth",
       "next",
       "pdf-parse",
@@ -62,9 +60,7 @@ describe("stateless compact runtime", () => {
       'from "groq-sdk',
       "SEARCH_PROVIDER",
       "RETRIEVAL_PROVIDER",
-      "BRAVE_SEARCH_API_KEY",
       "GOOGLE_GENERATIVE_AI_API_KEY",
-      "OPENROUTER_API_KEY",
     ]) {
       expect(source).not.toContain(removed);
     }

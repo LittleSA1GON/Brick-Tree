@@ -101,4 +101,21 @@ describe("POST /api/agent", () => {
     expect(mocks.discoverLearningPath).not.toHaveBeenCalled();
   });
 
+  it("rejects an oversized body even when Content-Length is unavailable", async () => {
+    const { POST } = await import("@/app/api/agent/route");
+    const oversized = JSON.stringify({
+      action: "navigate",
+      traversal: { mode: "tree", intent: "decompose" },
+      topic: "Calculus",
+      padding: "x".repeat(3_500_000),
+    });
+    const response = await POST(new Request("http://localhost/api/agent", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: oversized,
+    }));
+    expect(response.status).toBe(413);
+    expect(mocks.navigateTree).not.toHaveBeenCalled();
+  });
+
 });

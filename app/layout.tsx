@@ -1,12 +1,11 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import "@xyflow/react/dist/style.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Brick Tree — Build and Explore Knowledge",
+  title: "Brick Tree — Cut down complex ideas and build up new ones",
   description:
-    "Break complex ideas down to their roots or build upward from what you already know with an agentic interactive knowledge graph.",
+    "Use Tree to break an idea into clearer parts or Brick to build from what you already know toward what comes next.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {

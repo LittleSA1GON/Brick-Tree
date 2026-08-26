@@ -1,10 +1,10 @@
 import { AgentRequestSchema } from "@/lib/schemas/api";
 import { branchFromConcept, discoverLearningPath, explainConcept, findResources, navigateTree } from "@/lib/agents/orchestrator";
 import { LLMConfigurationError } from "@/lib/llm/provider";
-import { assertSameOrigin } from "@/lib/utils/request";
+import { assertSameOrigin, requestBodyTooLarge } from "@/lib/utils/request";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 function errorResponse(code: string, message: string, status = 400) {
   return Response.json(
@@ -20,14 +20,18 @@ export async function POST(request: Request) {
     return errorResponse("invalid_origin", "Cross-origin agent requests are not allowed.", 403);
   }
 
-  const contentLength = Number(request.headers.get("content-length") ?? "0");
-  if (contentLength > 3_500_000) {
+  const maxRequestBytes = 3_500_000;
+  if (requestBodyTooLarge(request, maxRequestBytes)) {
     return errorResponse("request_too_large", "This request is too large for the interactive agent endpoint.", 413);
   }
 
   let body: unknown;
   try {
-    body = await request.json();
+    const rawBody = await request.text();
+    if (new TextEncoder().encode(rawBody).byteLength > maxRequestBytes) {
+      return errorResponse("request_too_large", "This request is too large for the interactive agent endpoint.", 413);
+    }
+    body = JSON.parse(rawBody);
   } catch {
     return errorResponse("invalid_json", "Request body must be valid JSON.");
   }

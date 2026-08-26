@@ -1,18 +1,50 @@
-import { getEnv, selectedProviderHasCredentials } from "@/lib/config/env";
+import { getEnv, selectedProviderHasCredentials, type ProviderName } from "@/lib/config/env";
 import { publicAgentList } from "@/lib/agents/orchestrator";
+import { getLLMProviderAttempts } from "@/lib/llm/factory";
 
 export const runtime = "nodejs";
 
+const PROVIDERS: ProviderName[] = ["groq", "gemini", "openrouter", "openai-compatible"];
+const ROUTED_ROLES = [
+  "concept_architect",
+  "learning_path",
+  "pedagogy_validator",
+  "resource_agent",
+  "explanation",
+] as const;
+
 export async function GET() {
   const env = getEnv();
+  const configuredProviders = PROVIDERS.filter((provider) => selectedProviderHasCredentials(provider));
+  const routing = Object.fromEntries(
+    ROUTED_ROLES.map((role) => [
+      role,
+      getLLMProviderAttempts(role).map((attempt) => ({
+        provider: attempt.provider,
+        model: attempt.model,
+      })),
+    ]),
+  );
+
   return Response.json({
     ok: true,
     app: "Brick Tree",
+    version: "0.7.0",
     runtime: "vercel-stateless",
     persistentStorage: false,
     llmProvider: env.LLM_PROVIDER,
-    llmConfigured: selectedProviderHasCredentials(),
-    webSearchConfigured: Boolean(env.TAVILY_API_KEY),
+    llmConfigured: configuredProviders.length > 0,
+    configuredProviders,
+    routing,
+    resources: {
+      wikipedia: true,
+      crossref: true,
+      arxiv: true,
+      semanticScholar: true,
+      openAlex: true,
+      tavily: Boolean(env.TAVILY_API_KEY),
+      brave: Boolean(env.BRAVE_SEARCH_API_KEY),
+    },
     ragConfigured: Boolean(env.LOCAL_RAG_BASE_URL),
     agents: publicAgentList(),
   });
