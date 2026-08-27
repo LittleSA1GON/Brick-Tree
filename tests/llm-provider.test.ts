@@ -31,10 +31,8 @@ afterEach(() => {
 });
 
 describe("OpenAI-compatible structured output", () => {
-  it("asks Groq for JSON Schema first and falls back only for compatibility rejection", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response("schema rejected", { status: 400 }))
-      .mockResolvedValueOnce(okResponse());
+  it("uses one compact JSON-object request for Groq", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(okResponse());
     vi.stubGlobal("fetch", fetchMock);
 
     const provider = new OpenAICompatibleProvider(
@@ -46,14 +44,33 @@ describe("OpenAI-compatible structured output", () => {
 
     const result = await provider.generateStructured(input);
     expect(result.data.title).toBe("ok");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    const first = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    const second = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
-    expect(first.response_format.type).toBe("json_schema");
-    expect(first.response_format.json_schema.strict).toBe(false);
-    expect(second.response_format).toEqual({ type: "json_object" });
-    expect(first.max_tokens).toBe(1000);
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.response_format).toEqual({ type: "json_object" });
+    expect(body.max_completion_tokens).toBe(1000);
+    expect(body.max_tokens).toBeUndefined();
+    expect(body.reasoning_effort).toBe("low");
+  });
+
+  it("does not spend a second Groq request after HTTP 400", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response("bad request", { status: 400 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAICompatibleProvider(
+      "groq",
+      "openai/gpt-oss-120b",
+      "https://api.groq.com/openai/v1",
+      "test-key",
+    );
+
+    await expect(provider.generateStructured(input)).rejects.toMatchObject({
+      kind: "request_rejected",
+      status: 400,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("does not spend an extra Gemini call on JSON Schema compatibility", async () => {

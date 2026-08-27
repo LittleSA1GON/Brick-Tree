@@ -139,35 +139,41 @@ export type ConceptEdge = z.infer<typeof ConceptEdgeSchema>;
 export const DifficultyAssessmentSchema = z.object({
   difficulty: DifficultyScoreSchema,
   difficultyLabel: DifficultyLabelSchema,
-  difficultyExplanation: z.string().min(1).max(1000),
-  difficultyFactors: z.array(z.string().min(1).max(160)).max(8),
+  difficultyExplanation: z.string().min(1).max(700),
+  difficultyFactors: z.array(z.string().min(1).max(120)).max(5).default([]),
 });
 export type DifficultyAssessment = z.infer<typeof DifficultyAssessmentSchema>;
 
+/**
+ * Initial Tree generation is intentionally compact. The graph only needs enough
+ * information to render a useful adjacent layer. Rich explanations and resources
+ * are loaded lazily when a learner opens a node. Defaults make JSON-object mode
+ * tolerant of omitted secondary fields without inventing missing child concepts.
+ */
 export const ConceptChildProposalSchema = z.object({
-  title: z.string().min(1).max(180),
-  description: z.string().min(1).max(420),
-  whyItMatters: z.string().min(1).max(900),
+  title: z.string().min(1).max(160),
+  description: z.string().min(1).max(320),
   difficulty: DifficultyScoreSchema,
   difficultyLabel: DifficultyLabelSchema,
-  difficultyExplanation: z.string().min(1).max(1000),
-  difficultyFactors: z.array(z.string().min(1).max(160)).max(8),
-  prerequisites: z.array(z.string()).max(10),
-  learningOutcomes: z.array(z.string()).max(10),
-  applications: z.array(z.string()).max(10),
-  examples: z.array(z.string()).max(6),
-  whatItUnlocks: z.array(z.string()).max(10),
+  difficultyExplanation: z.string().min(1).max(500),
+  difficultyFactors: z.array(z.string().min(1).max(120)).max(5).default([]),
+  whyItMatters: z.string().max(500).optional(),
+  prerequisites: z.array(z.string().min(1).max(140)).max(5).default([]),
+  learningOutcomes: z.array(z.string().min(1).max(160)).max(5).default([]),
+  applications: z.array(z.string().min(1).max(160)).max(5).default([]),
+  examples: z.array(z.string().min(1).max(180)).max(4).default([]),
+  whatItUnlocks: z.array(z.string().min(1).max(160)).max(5).default([]),
   estimatedLearningTime: z.string().max(120).optional(),
-  confidence: z.number().min(0).max(1),
-  evidence: z.array(EvidenceReferenceSchema).max(8).default([]),
+  confidence: z.number().min(0).max(1).default(0.75),
+  evidence: z.array(EvidenceReferenceSchema).max(6).default([]),
 });
 
 export const ConceptDecompositionSchema = z.object({
   parentConcept: z.string().min(1).max(300),
-  summary: z.string().min(1).max(900),
+  summary: z.string().min(1).max(650),
   parentAssessment: DifficultyAssessmentSchema,
   children: z.array(ConceptChildProposalSchema).min(3).max(6),
-  confidence: z.number().min(0).max(1),
+  confidence: z.number().min(0).max(1).default(0.75),
 });
 export type ConceptDecomposition = z.infer<typeof ConceptDecompositionSchema>;
 

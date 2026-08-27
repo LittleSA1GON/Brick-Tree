@@ -22,6 +22,64 @@ export type ConceptArchitectInput = {
   revisionFeedback?: string[];
 };
 
+
+function compactProfile(profile?: LearnerProfile) {
+  if (!profile) return {};
+  return {
+    educationLevel: profile.educationLevel,
+    existingKnowledge: profile.existingKnowledge.slice(0, 20),
+    goal: profile.goal,
+    learningGoal: profile.learningGoal,
+    desiredField: profile.desiredField,
+    knowledgeLevel: profile.knowledgeLevel,
+    languageStyle: profile.languageStyle,
+    depthPreference: profile.depthPreference,
+    purpose: profile.purpose,
+    preferredDepth: profile.preferredDepth,
+    availableStudyTime: profile.availableStudyTime,
+    preferredExamples: profile.preferredExamples?.slice(0, 5),
+    courseContext: profile.courseContext?.slice(0, 1800),
+    sourceMode: profile.sourceMode,
+  };
+}
+
+function compactGraphContext(context?: GraphContext) {
+  if (!context) return {};
+  return {
+    focusedNodeId: context.focusedNodeId,
+    existingTitles: context.nodes.slice(-60).map((node) => ({
+      title: node.title,
+      parentId: node.parentId,
+      depth: node.depth,
+      difficulty: node.difficulty,
+      knowledgeStatus: node.knowledgeStatus,
+    })),
+    levels: context.levels.slice(-8).map((level) => ({
+      index: level.index,
+      axis: level.axis,
+      minDifficulty: level.minDifficulty,
+      maxDifficulty: level.maxDifficulty,
+    })),
+  };
+}
+
+function compactEvidence(evidence: ConceptArchitectInput["retrievedEvidence"]) {
+  return (evidence ?? []).slice(0, 6).map((item) => ({
+    id: item.id,
+    title: item.title,
+    source: item.source,
+    text: item.text?.slice(0, 650),
+    metadata: item.metadata
+      ? {
+          documentId: item.metadata.documentId,
+          sectionId: item.metadata.sectionId,
+          page: item.metadata.page,
+          heading: item.metadata.heading,
+        }
+      : undefined,
+  }));
+}
+
 export const conceptArchitectAgent: AgentSpec<ConceptArchitectInput, ConceptDecomposition> = {
   name: "concept_architect",
   description: "Concept Architect is cutting a coherent Tree layer of similarly difficult branches.",
@@ -41,9 +99,9 @@ Use this universal difficulty scale:
 4 Advanced — strong prerequisite fluency and several interacting abstractions or methods.
 5 Expert — deep specialized knowledge, high formalism, or open-ended expert judgment.
 
-Every child must include a concise one- or two-sentence description answering "What is this?" immediately. For every parent and child, explain WHY it is difficult and list the main difficulty factors.
+Every child must include a concise one- or two-sentence description answering "What is this?" immediately plus one short explanation of why it sits at its assigned difficulty. Difficulty-factor arrays are optional and should stay short. Do not spend initial-generation tokens on prerequisites, outcomes, applications, examples, unlocks, or learning-time estimates unless they are essential; those details can be generated lazily when the learner opens a node.
 
-Prefer 4-5 children. Use 3 or 6 only when accuracy requires it. Avoid duplicate concepts and preserve plausible relationships. Every child must be only ONE reasonable conceptual step from its parent. Never skip an intermediate concept that a learner would need in order to understand the child. A child difficulty score must stay within one point of the parent difficulty.
+Normally return exactly 4 children. Use 3 or 5 only when accuracy genuinely requires it. Avoid duplicate concepts and preserve plausible relationships. Every child must be only ONE reasonable conceptual step from its parent. Never skip an intermediate concept that a learner would need in order to understand the child. A child difficulty score must stay within one point of the parent difficulty.
 
 In trace-prerequisites intent, children should normally be no harder than the parent and should move toward more accessible foundations over successive levels. Each prerequisite layer must move only one understandable step downward; do not leap from an advanced parent directly to elementary material when an intermediate prerequisite belongs between them. If learner-known concepts are supplied, treat them as stopping points rather than inventing unnecessary prerequisites below them.
 
@@ -60,7 +118,7 @@ When evidence supports a child, include evidence references using documentId/sec
   maxSteps: 5,
   outputSchema: ConceptDecompositionSchema,
   schemaName: "ConceptDecomposition",
-  schemaHint: `JSON fields: parentConcept:string, summary:string, parentAssessment:{difficulty:1-5,difficultyLabel:'Foundational'|'Beginner'|'Intermediate'|'Advanced'|'Expert',difficultyExplanation:string,difficultyFactors:string[]}, children:3-6 items. Each child has title,description,whyItMatters,difficulty 1-5,difficultyLabel,difficultyExplanation,difficultyFactors[],prerequisites[],learningOutcomes[],applications[],examples[],whatItUnlocks[],estimatedLearningTime?,confidence 0-1,evidence:[{documentId,sectionId,page?,heading?,quote?}]. Top-level confidence 0-1.`,
+  schemaHint: `Required JSON: parentConcept, summary, parentAssessment {difficulty,difficultyLabel,difficultyExplanation,difficultyFactors}, children (normally exactly 4; 3-5 only when accuracy requires it), confidence optional. Every child MUST include title, description, difficulty, difficultyLabel, difficultyExplanation. Secondary arrays/whyItMatters/confidence/evidence may be omitted unless useful; defaults are applied locally. Keep descriptions and difficulty explanations concise.`,
   buildUserPrompt(input) {
     const target = input.targetLevel
       ? `${JSON.stringify(input.targetLevel)}\nInvariant: ${levelInvariantSummary(input.targetLevel)}`
@@ -70,12 +128,12 @@ Parent concept: ${input.parentTitle}
 Tree intent: ${input.intent}
 Known parent difficulty: ${input.parentDifficulty ?? "estimate it"}
 Target child difficulty layer: ${target}
-Learner/session profile: ${JSON.stringify(input.learnerProfile ?? {})}
-Existing graph context: ${JSON.stringify(input.graphContext ?? {})}
+Learner/session profile: ${JSON.stringify(compactProfile(input.learnerProfile))}
+Existing graph context: ${JSON.stringify(compactGraphContext(input.graphContext))}
 Source mode: ${input.sourceMode ?? input.learnerProfile?.sourceMode ?? "general"}
-Retrieved source evidence: ${JSON.stringify(input.retrievedEvidence ?? [])}
-Revision feedback: ${input.revisionFeedback?.join(" | ") || "none"}
+Retrieved source evidence: ${JSON.stringify(compactEvidence(input.retrievedEvidence))}
+Revision feedback: ${input.revisionFeedback?.slice(0, 6).join(" | ") || "none"}
 
-Return a useful layer for the requested TREE intent. Keep siblings at approximately the same understanding difficulty. Respect the learner's knowledge level, requested vernacular, depth, purpose, and known concepts. Give a concrete explanation for why each node earned its difficulty score. For analyze-question, the root layer should cover the most relevant Who/What/Why/Where/How-style lenses without forcing irrelevant categories; deeper layers should become more specific and actionable.`;
+Return one adjacent TREE layer. Normally return exactly 4 sibling nodes; use 3 or 5 only when the concept genuinely calls for it. Each child must be only one understandable conceptual step from the parent and within one difficulty point of the parent. Keep the initial response compact: title, brief description, difficulty, difficulty label, and one short difficulty explanation are the priority. Omit secondary arrays unless they add real value. For analyze-question, use specific reasoning lenses rather than generic 5W/H labels.`;
   },
 };

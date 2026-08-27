@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ConceptDecompositionSchema } from "@/lib/schemas/concept";
 import { AgentRequestSchema } from "@/lib/schemas/api";
-import { LearnerProfileSchema } from "@/lib/schemas/learning-path";
+import { LearnerProfileSchema, LearningPathProposalSchema } from "@/lib/schemas/learning-path";
 
 const child = (title: string, difficulty = 3) => ({
   title,
@@ -37,6 +37,32 @@ describe("structured schemas", () => {
     expect(result.success).toBe(true);
   });
 
+
+  it("accepts compact ConceptDecomposition output and applies safe metadata defaults", () => {
+    const result = ConceptDecompositionSchema.safeParse({
+      parentConcept: "Calculus",
+      summary: "Core branches of calculus.",
+      parentAssessment: {
+        difficulty: 3,
+        difficultyLabel: "Intermediate",
+        difficultyExplanation: "It combines algebraic fluency with abstract change.",
+      },
+      children: [
+        { title: "Limits", description: "How values approach a target.", difficulty: 3, difficultyLabel: "Intermediate", difficultyExplanation: "Requires function intuition." },
+        { title: "Derivatives", description: "How quantities change locally.", difficulty: 3, difficultyLabel: "Intermediate", difficultyExplanation: "Builds on limits and algebra." },
+        { title: "Integrals", description: "How small contributions accumulate.", difficulty: 3, difficultyLabel: "Intermediate", difficultyExplanation: "Connects area and accumulation." },
+        { title: "Series", description: "How repeated terms form infinite sums.", difficulty: 3, difficultyLabel: "Intermediate", difficultyExplanation: "Requires sequence and limit reasoning." },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.confidence).toBe(0.75);
+      expect(result.data.children[0].confidence).toBe(0.75);
+      expect(result.data.children[0].applications).toEqual([]);
+      expect(result.data.parentAssessment.difficultyFactors).toEqual([]);
+    }
+  });
+
   it("rejects decompositions without enough children", () => {
     const result = ConceptDecompositionSchema.safeParse({
       parentConcept: "Calculus",
@@ -51,6 +77,32 @@ describe("structured schemas", () => {
       confidence: 0.9,
     });
     expect(result.success).toBe(false);
+  });
+
+  it("accepts compact Brick layer output and applies safe heuristic defaults", () => {
+    const result = LearningPathProposalSchema.safeParse({
+      learnerSummary: "The learner knows algebra and basic programming.",
+      foundationAssessment: {
+        difficulty: 2,
+        difficultyLabel: "Beginner",
+        difficultyExplanation: "The foundation supports one-step applied concepts.",
+      },
+      directions: [
+        { title: "Functions", description: "Reusable mappings from inputs to outputs.", whyReachable: "Builds directly on algebra.", difficulty: 2, difficultyLabel: "Beginner", difficultyExplanation: "Uses familiar algebraic relationships." },
+        { title: "Data Structures", description: "Ways to organize values for programs.", whyReachable: "Builds directly on basic programming.", difficulty: 2, difficultyLabel: "Beginner", difficultyExplanation: "Adds organization without a large abstraction jump." },
+        { title: "Descriptive Statistics", description: "Summaries such as averages and spread.", whyReachable: "Uses arithmetic and basic data handling.", difficulty: 2, difficultyLabel: "Beginner", difficultyExplanation: "Requires only a small step beyond arithmetic." },
+        { title: "Boolean Logic", description: "Reasoning with true and false conditions.", whyReachable: "Builds directly on programming conditionals.", difficulty: 2, difficultyLabel: "Beginner", difficultyExplanation: "Adds formal names to familiar decisions." },
+      ],
+      recommendedTitle: "Functions",
+      recommendationReason: "It connects the current algebra and programming foundation.",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.confidence).toBe(0.75);
+      expect(result.data.directions[0].readinessScore).toBe(60);
+      expect(result.data.directions[0].missingPrerequisites).toEqual([]);
+      expect(result.data.foundationAssessment.difficultyFactors).toEqual([]);
+    }
   });
 
   it("requires a destination goal only in Brick Destination", () => {

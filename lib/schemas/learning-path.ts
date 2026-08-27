@@ -28,38 +28,44 @@ export const LearnerProfileSchema = z.object({
 });
 export type LearnerProfile = z.infer<typeof LearnerProfileSchema>;
 
+/**
+ * Brick layer generation follows the same compact-first rule as Tree. Core
+ * adjacency/difficulty fields stay required; secondary arrays and heuristic scores
+ * get safe defaults so a useful layer is not discarded because a model omitted
+ * nonessential metadata near the end of a response.
+ */
 export const LearningDirectionProposalSchema = z.object({
   title: z.string().min(1).max(120),
-  description: z.string().min(1).max(500),
-  whyReachable: z.string().min(1).max(900),
-  satisfiedPrerequisites: z.array(z.string()).max(12),
-  missingPrerequisites: z.array(z.string()).max(12),
-  unlocks: z.array(z.string()).max(12),
-  applications: z.array(z.string()).max(12),
+  description: z.string().min(1).max(360),
+  whyReachable: z.string().min(1).max(600),
   difficulty: DifficultyScoreSchema,
   difficultyLabel: DifficultyLabelSchema,
-  difficultyExplanation: z.string().min(1).max(1000),
-  difficultyFactors: z.array(z.string().min(1).max(160)).max(8),
+  difficultyExplanation: z.string().min(1).max(500),
+  difficultyFactors: z.array(z.string().min(1).max(120)).max(5).default([]),
+  satisfiedPrerequisites: z.array(z.string().min(1).max(140)).max(6).default([]),
+  missingPrerequisites: z.array(z.string().min(1).max(140)).max(6).default([]),
+  unlocks: z.array(z.string().min(1).max(160)).max(5).default([]),
+  applications: z.array(z.string().min(1).max(160)).max(5).default([]),
   estimatedLearningTime: z.string().max(120).optional(),
-  readinessScore: z.number().min(0).max(100),
-  goalAlignmentScore: z.number().min(0).max(100),
-  prerequisiteGapScore: z.number().min(0).max(100),
-  utilityScore: z.number().min(0).max(100),
-  recommendationScore: z.number().min(0).max(100),
-  confidence: z.number().min(0).max(1),
-  evidence: z.array(EvidenceReferenceSchema).max(8).default([]),
+  readinessScore: z.number().min(0).max(100).default(60),
+  goalAlignmentScore: z.number().min(0).max(100).default(50),
+  prerequisiteGapScore: z.number().min(0).max(100).default(50),
+  utilityScore: z.number().min(0).max(100).default(50),
+  recommendationScore: z.number().min(0).max(100).default(50),
+  confidence: z.number().min(0).max(1).default(0.75),
+  evidence: z.array(EvidenceReferenceSchema).max(6).default([]),
 });
 
 export const LearningPathProposalSchema = z.object({
-  learnerSummary: z.string().min(1).max(1200),
-  inferredAssumptions: z.array(z.string()).max(10),
+  learnerSummary: z.string().min(1).max(700),
+  inferredAssumptions: z.array(z.string().min(1).max(180)).max(6).default([]),
   foundationAssessment: DifficultyAssessmentSchema,
   foundationSuggestions: z.array(z.string().min(1).max(120)).max(4).default([]),
   directions: z.array(LearningDirectionProposalSchema).min(3).max(6),
   recommendedTitle: z.string().min(1).max(120),
-  recommendationReason: z.string().min(1).max(1200),
+  recommendationReason: z.string().min(1).max(700),
   estimatedDestinationHeight: z.number().int().min(1).max(12).optional(),
-  destinationHeightReason: z.string().min(1).max(900).optional(),
-  confidence: z.number().min(0).max(1),
+  destinationHeightReason: z.string().min(1).max(600).optional(),
+  confidence: z.number().min(0).max(1).default(0.75),
 });
 export type LearningPathProposal = z.infer<typeof LearningPathProposalSchema>;

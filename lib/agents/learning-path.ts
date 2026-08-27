@@ -18,6 +18,44 @@ export type LearningPathInput = {
   revisionFeedback?: string[];
 };
 
+
+function compactProfile(profile?: LearnerProfile) {
+  if (!profile) return {};
+  return {
+    educationLevel: profile.educationLevel,
+    existingKnowledge: profile.existingKnowledge.slice(0, 20),
+    goal: profile.goal,
+    learningGoal: profile.learningGoal,
+    desiredField: profile.desiredField,
+    knowledgeLevel: profile.knowledgeLevel,
+    languageStyle: profile.languageStyle,
+    depthPreference: profile.depthPreference,
+    purpose: profile.purpose,
+    preferredDepth: profile.preferredDepth,
+    availableStudyTime: profile.availableStudyTime,
+    preferredExamples: profile.preferredExamples?.slice(0, 5),
+    courseContext: profile.courseContext?.slice(0, 1800),
+    sourceMode: profile.sourceMode,
+  };
+}
+
+function compactEvidence(evidence: LearningPathInput["retrievedEvidence"]) {
+  return (evidence ?? []).slice(0, 6).map((item) => ({
+    id: item.id,
+    title: item.title,
+    source: item.source,
+    text: item.text?.slice(0, 650),
+    metadata: item.metadata
+      ? {
+          documentId: item.metadata.documentId,
+          sectionId: item.metadata.sectionId,
+          page: item.metadata.page,
+          heading: item.metadata.heading,
+        }
+      : undefined,
+  }));
+}
+
 export const learningPathAgent: AgentSpec<LearningPathInput, LearningPathProposal> = {
   name: "learning_path",
   description: "Learning Path Agent is constructing the next reachable Brick layer.",
@@ -29,7 +67,7 @@ BRICK is constructive, not a curriculum generator. Think in layers of reachable 
 - Each higher positive height must add exactly one reasonable conceptual step beyond the layer below it; never jump across missing intermediate knowledge.
 - In destination mode, estimate how many conceptual layers the destination is from the foundation. This is a rough educational estimate, not a promise or exact course length.
 
-Generate 3-6 candidate directions at one comparable next-step height. Every candidate must be only ONE reasonable conceptual step above the current foundation or focused brick: something the learner could plausibly approach next without silently requiring an ungenerated intermediate topic. Their understanding difficulty should normally differ by at most one point, and no candidate may be more than one difficulty point above the current foundation/focused brick.
+Normally generate exactly 4 candidate directions at one comparable next-step height. Use 3 or 5 only when accuracy genuinely requires it. Every candidate must be only ONE reasonable conceptual step above the current foundation or focused brick: something the learner could plausibly approach next without silently requiring an ungenerated intermediate topic. Their understanding difficulty should normally differ by at most one point, and no candidate may be more than one difficulty point above the current foundation/focused brick.
 
 Use this universal difficulty scale:
 1 Foundational — basic vocabulary and concrete reasoning with little prerequisite knowledge.
@@ -38,7 +76,7 @@ Use this universal difficulty scale:
 4 Advanced — strong fluency and several interacting abstractions or methods.
 5 Expert — deep specialized knowledge, high formalism, or open-ended expert judgment.
 
-Every direction must answer what it is, why it is reachable, which known prerequisites support it, what is still missing, what it unlocks, and why its difficulty score is justified.
+Every direction must state what it is, why it is reachable, and briefly justify its difficulty. Keep the initial layer compact. Prerequisite lists, unlocks, applications, heuristic scores, time estimates, and evidence arrays are secondary and may be omitted unless they materially change the recommendation; local defaults fill them and richer detail can be generated when the learner opens a node.
 
 Foundation behavior:
 - Preserve every user-provided known concept as a foundation brick.
@@ -69,16 +107,16 @@ Never invent evidence identifiers or URLs.`,
   maxSteps: 5,
   outputSchema: LearningPathProposalSchema,
   schemaName: "LearningPathProposal",
-  schemaHint: `JSON fields: learnerSummary, inferredAssumptions[], foundationAssessment:{difficulty:1-5,difficultyLabel,difficultyExplanation,difficultyFactors[]}, foundationSuggestions:0-4 strings, directions:3-6, recommendedTitle, recommendationReason, estimatedDestinationHeight?:1-12, destinationHeightReason?:string, confidence. Each direction includes title,description,whyReachable,satisfiedPrerequisites[],missingPrerequisites[],unlocks[],applications[],difficulty,difficultyLabel,difficultyExplanation,difficultyFactors[],estimatedLearningTime?,readinessScore,goalAlignmentScore,prerequisiteGapScore,utilityScore,recommendationScore,confidence,evidence[].`,
+  schemaHint: `Required JSON: learnerSummary, foundationAssessment {difficulty,difficultyLabel,difficultyExplanation,difficultyFactors}, directions (normally exactly 4; 3-5 only when accuracy requires it), recommendedTitle, recommendationReason. Every direction MUST include title, description, whyReachable, difficulty, difficultyLabel, difficultyExplanation. Secondary arrays, scores, confidence, evidence, and time estimates may be omitted; defaults are applied locally. Destination mode should include estimatedDestinationHeight and a brief destinationHeightReason when possible.`,
   buildUserPrompt(input) {
-    return `Known foundation bricks supplied by the learner: ${input.knownConcepts.join(", ")}
+    return `Known foundation bricks supplied by the learner: ${input.knownConcepts.slice(0, 20).join(", ")}
 Brick intent: ${input.intent}
 Destination: ${input.intent === "destination" ? (input.goal || input.learnerProfile?.learningGoal || input.learnerProfile?.goal || "not specified") : "none"}
-Learner/session profile: ${JSON.stringify(input.learnerProfile ?? {})}
+Learner/session profile: ${JSON.stringify(compactProfile(input.learnerProfile))}
 Target peer layer: ${input.targetLevel ? `${JSON.stringify(input.targetLevel)}\n${levelInvariantSummary(input.targetLevel)}` : "Choose one coherent next-step difficulty band."}
-Optional source evidence: ${JSON.stringify(input.retrievedEvidence ?? [])}
-Revision feedback: ${input.revisionFeedback?.join(" | ") || "none"}
+Optional source evidence: ${JSON.stringify(compactEvidence(input.retrievedEvidence))}
+Revision feedback: ${input.revisionFeedback?.slice(0, 6).join(" | ") || "none"}
 
-Construct the next Brick layer. Keep the supplied foundation intact. Suggest only genuinely missing foundation bricks. In destination mode, estimate the destination height from the ORIGINAL Height 0, keep that estimate at or above the target peer layer, and explain it without pretending ungenerated intermediate layers already exist.`;
+Construct exactly one adjacent Brick layer. Normally return exactly 4 peer directions; use 3 or 5 only when accuracy requires it. Every direction must be one realistically learnable conceptual step above the current foundation/focused brick and no more than one difficulty point harder. Keep the initial response compact and prioritize the required fields. In destination mode, estimate the absolute destination height from original Height 0 without inventing ungenerated intermediate layers.`;
   },
 };
