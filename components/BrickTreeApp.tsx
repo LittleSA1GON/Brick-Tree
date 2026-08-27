@@ -893,7 +893,6 @@ function Landing({ onBegin }: { onBegin: (mode: PrimaryMode) => void }) {
       <section className={styles.landingFacts} aria-label="How Brick Tree works">
         <article><strong>Tree</strong><p>Cut a concept into useful branches, trace what comes before it, or unpack an open question.</p></article>
         <article><strong>Brick</strong><p>Start from known skills and surface realistic next concepts—or aim toward a destination.</p></article>
-        <article><strong>Keep moving</strong><p>Open any node for detail and resources, then continue from that exact point.</p></article>
       </section>
     </main>
   );

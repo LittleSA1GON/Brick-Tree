@@ -1280,3 +1280,114 @@
   .knowledgeNode { width: 100%; }
   .workspaceSwitcher { grid-template-columns: 1fr; }
 }
+
+/* Compact node scale: keep the hierarchy readable without letting unfocused nodes dominate the viewport. */
+.compactRow {
+  gap: clamp(7px, 1vw, 12px);
+}
+
+.compactNode {
+  width: clamp(112px, 11.5vw, 154px);
+  min-height: 82px;
+  padding: 10px 11px 9px;
+  border-radius: 13px;
+  box-shadow: 0 10px 28px rgba(0,0,0,.22);
+}
+
+.compactNode:hover,
+.compactSelected {
+  transform: translateY(-2px) scale(1.035);
+}
+
+.compactNode > span {
+  margin-bottom: 5px;
+  font-size: 8px;
+  letter-spacing: .1em;
+}
+
+.compactNode strong {
+  font-size: clamp(12px, 1vw, 15px);
+  line-height: 1.12;
+}
+
+.compactNode p {
+  -webkit-line-clamp: 2;
+  margin: 5px 0 6px;
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.compactNode small {
+  font-size: 7px;
+  letter-spacing: .06em;
+}
+
+/* The clicked/focused node enlarges, but stays compact enough to leave hierarchy context visible. */
+.knowledgeNode {
+  width: min(520px, calc(100vw - 230px));
+  padding: clamp(17px, 2vw, 23px);
+  border-radius: 20px;
+}
+
+.knowledgeNode h2 {
+  font-size: clamp(23px, 2.4vw, 34px);
+}
+
+.nodeBrief {
+  font-size: clamp(13px, 1.2vw, 16px);
+}
+
+@keyframes focusNodeIn {
+  from {
+    opacity: 0;
+    transform: scale(.82) translateY(12px);
+  }
+  72% {
+    opacity: 1;
+    transform: scale(1.025) translateY(0);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@media (max-width: 900px) {
+  .compactRow {
+    gap: 8px;
+  }
+
+  .compactNode {
+    width: min(142px, calc(33.333% - 8px));
+    min-height: 78px;
+  }
+
+  .knowledgeNode {
+    width: min(500px, calc(100vw - 92px));
+  }
+}
+
+@media (max-width: 560px) {
+  .compactRow {
+    gap: 7px;
+  }
+
+  .compactNode {
+    width: min(128px, calc(50% - 5px));
+    min-height: 74px;
+    padding: 9px 10px 8px;
+  }
+
+  .compactNode strong {
+    font-size: 12px;
+  }
+
+  .compactNode p {
+    font-size: 9px;
+  }
+
+  .knowledgeNode {
+    width: min(100%, 440px);
+    padding: 17px 15px;
+  }
+}
