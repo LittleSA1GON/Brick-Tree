@@ -832,6 +832,7 @@ export function BrickTreeApp() {
         levels={availableLevels}
         activeLevel={focusNode ? nodeLevel(focusNode) : 0}
         descriptors={levels}
+        dismissKey={focusNode?.id ?? selectedNodeId ?? "none"}
         onSelect={selectLevel}
       />
 
@@ -982,22 +983,50 @@ function ModeDock({ mode, onChange }: { mode: PrimaryMode; onChange: (mode: Prim
   );
 }
 
-function AxisRail({ axis, levels, activeLevel, descriptors, onSelect }: {
+function AxisRail({ axis, levels, activeLevel, descriptors, dismissKey, onSelect }: {
   axis: "Depth" | "Height";
   levels: number[];
   activeLevel: number;
   descriptors: GraphLevelDescriptor[];
+  dismissKey: string;
   onSelect: (level: number) => void;
 }) {
   const [openLevel, setOpenLevel] = useState<number>();
+  const railRef = useRef<HTMLElement | null>(null);
   const axisKey = axis === "Depth" ? "depth" : "height";
   const available = levels.length ? levels : [0];
   const descriptor = openLevel === undefined
     ? undefined
     : descriptors.find((item) => item.axis === axisKey && item.index === Math.abs(openLevel));
 
+  useEffect(() => {
+    setOpenLevel(undefined);
+  }, [dismissKey]);
+
+  useEffect(() => {
+    if (openLevel === undefined) return;
+
+    const closeWhenOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (!railRef.current?.contains(target)) setOpenLevel(undefined);
+    };
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpenLevel(undefined);
+    };
+
+    document.addEventListener("pointerdown", closeWhenOutside);
+    document.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      document.removeEventListener("pointerdown", closeWhenOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [openLevel]);
+
   return (
-    <aside className={styles.axisRail} aria-label={`${axis} levels`}>
+    <aside ref={railRef} className={styles.axisRail} aria-label={`${axis} levels`}>
       <div>
         {available.map((level) => (
           <button
@@ -1018,13 +1047,20 @@ function AxisRail({ axis, levels, activeLevel, descriptors, onSelect }: {
       {openLevel !== undefined ? (
         <div className={styles.axisPopover}>
           <strong>{axis} {openLevel > 0 ? `+${openLevel}` : openLevel}</strong>
+          <small>Why these nodes share this level</small>
+          <p>{descriptor?.peerRule || (openLevel === 0
+            ? axis === "Depth"
+              ? "Depth 0 contains the single root concept that defines this Tree's starting reference."
+              : "Height 0 contains the learner's stated foundation bricks, which define this Brick workspace's starting reference."
+            : "The nodes on this layer are intended to require comparable prerequisite knowledge and reasoning effort.")}</p>
+          <small>{openLevel === 0 ? "Why this is the baseline" : "Compared with the previous layer"}</small>
           <p>{descriptor?.description || (openLevel === 0
             ? axis === "Depth"
-              ? "Depth 0 is the concept or question you chose as the root of this Tree."
-              : "Height 0 is the foundation knowledge you supplied to start this Brick map."
+              ? "This root is the concept or question the learner chose before any cuts are made."
+              : "This foundation is the knowledge the learner supplied before any higher Brick layers are constructed."
             : axis === "Depth"
-              ? "One branch below the previous Tree layer. Each step cuts the focused idea into one directly understandable layer."
-              : "One construction layer above the previous Brick layer. Each step adds only directly reachable knowledge.")}</p>
+              ? "This cut should be one directly understandable step simpler, more foundational, or more specific than its parent layer."
+              : "This row should be one directly reachable learning step more complex than the Brick row below it.")}</p>
         </div>
       ) : null}
     </aside>

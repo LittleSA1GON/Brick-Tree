@@ -181,68 +181,6 @@ function narrateLevel(
   };
 }
 
-function treeLevelDescription(
-  parent: ConceptNode,
-  decomposition: ConceptDecomposition,
-  intent: TreeIntent,
-  index: number,
-): { description: string; peerRule: string } {
-  const childTitles = decomposition.children.slice(0, 5).map((child) => child.title).join(", ");
-  const signed = `Depth -${index}`;
-  if (intent === "trace-prerequisites") {
-    return {
-      description: `${signed} in this Tree traces one prerequisite layer beneath ${parent.title}. This cut identifies ${childTitles} as the immediate knowledge that supports the focused concept.`,
-      peerRule: `Every node at ${signed} must be one directly understandable prerequisite step below its parent in this specific Tree; do not skip an intermediate foundation.`,
-    };
-  }
-  if (intent === "analyze-question") {
-    return {
-      description: `${signed} in this Tree opens ${parent.title} through the next concrete reasoning lenses: ${childTitles}.`,
-      peerRule: `Every node at ${signed} must examine one direct aspect of its parent question at comparable reasoning depth without repeating generic labels.`,
-    };
-  }
-  return {
-    description: `${signed} in this Tree cuts ${parent.title} into its next directly understandable branches: ${childTitles}.`,
-    peerRule: `Every node at ${signed} must be one direct component of its parent and only one conceptual cut simpler, so the learner never skips a layer.`,
-  };
-}
-
-function brickFoundationTitles(
-  knownConcepts: string[],
-  proposal: LearningPathProposal,
-): string[] {
-  const supplied = [...new Set(knownConcepts.map((value) => value.trim()).filter(Boolean))];
-  const suppliedKeys = new Set(supplied.map(normalizeConceptTitle));
-  const roomForSuggestions = Math.max(0, BRICK_MAX_ROW_SIZE - 1 - supplied.length);
-  const suggestions = proposal.foundationSuggestions
-    .map((value) => value.trim())
-    .filter((value) => value && !suppliedKeys.has(normalizeConceptTitle(value)))
-    .slice(0, roomForSuggestions);
-  return [...supplied, ...suggestions];
-}
-
-function desiredBrickRowSize(lowerRowCount: number): number {
-  return Math.max(2, Math.min(BRICK_MAX_ROW_SIZE, lowerRowCount + 1));
-}
-
-function brickLevelDescription(
-  levelIndex: number,
-  lowerTitles: string[],
-  upperTitles: string[],
-  intent: BrickIntent,
-  goal?: string,
-): { description: string; peerRule: string } {
-  const lower = lowerTitles.slice(0, 6).join(", ");
-  const upper = upperTitles.slice(0, 6).join(", ");
-  const destination = intent === "destination" && goal
-    ? ` while moving one layer closer to ${goal}`
-    : "";
-  return {
-    description: `Height +${levelIndex} in this Brick workspace stacks one complete row above ${lower}. The new row adds ${upper}${destination}.`,
-    peerRule: `This row is one construction layer above Height +${Math.max(0, levelIndex - 1)}. Each new brick must connect only to one or two nearby supporting bricks from the row below and remain one reasonable learning step harder.`,
-  };
-}
-
 function addBrickStackShapeChecks(
   validation: PedagogyValidation,
   lowerRowCount: number,
@@ -773,16 +711,19 @@ export async function navigateTree(input: {
         finalDecomposition.parentAssessment,
         parentKnown ? "known" : "available",
         {
-          description: `Depth 0 is ${input.topic}, the starting concept for this Tree before any cuts are made.`,
-          peerRule: `Depth 0 belongs only to this Tree workspace and anchors every later negative depth to ${input.topic}.`,
+          description: `Depth 0 is the learner-specific baseline for ${input.topic}. ${finalDecomposition.parentAssessment.difficultyExplanation}`,
+          peerRule: `This Tree has one root at Depth 0. The agent assessed ${input.topic} at ${finalDecomposition.parentAssessment.difficulty}/5 (${finalDecomposition.parentAssessment.difficultyLabel}), which becomes the reference point for every later cut in this workspace.`,
         },
       );
     }
 
     const candidateScores = finalDecomposition.children.map((child) => child.difficulty);
     const baseLevel = targetLevel ?? levelFromDifficulties("depth", childIndex, candidateScores);
-    const levelStory = treeLevelDescription(parent, finalDecomposition, input.intent, childIndex);
-    finalLevel = narrateLevel(baseLevel, levelStory.description, levelStory.peerRule);
+    finalLevel = narrateLevel(
+      baseLevel,
+      finalDecomposition.levelNarrative.previousLevelComparison,
+      finalDecomposition.levelNarrative.sameLevelReason,
+    );
 
     let validationBase = deterministicValidationBaseline("Tree branch");
     if (getEnv().PEDAGOGY_VALIDATION_MODE === "llm") {
@@ -1075,14 +1016,11 @@ export async function discoverLearningPath(input: {
     const scores = finalProposal.directions.map((direction) => direction.difficulty);
     const foundationTitles = brickFoundationTitles(input.knownConcepts, finalProposal);
     const baseLevel = levelFromDifficulties("height", 1, scores);
-    const levelStory = brickLevelDescription(
-      1,
-      foundationTitles,
-      finalProposal.directions.map((direction) => direction.title),
-      intent,
-      input.goal,
+    finalLevel = narrateLevel(
+      baseLevel,
+      finalProposal.levelNarrative.previousLevelComparison,
+      finalProposal.levelNarrative.sameLevelReason,
     );
-    finalLevel = narrateLevel(baseLevel, levelStory.description, levelStory.peerRule);
 
     let validationBase = deterministicValidationBaseline("Brick layer");
     if (getEnv().PEDAGOGY_VALIDATION_MODE === "llm") {
@@ -1171,8 +1109,8 @@ export async function discoverLearningPath(input: {
     finalProposal.foundationAssessment,
     "known",
     {
-      description: `Height 0 is this Brick workspace's starting foundation: ${finalFoundationTitles.slice(0, 8).join(", ")}.`,
-      peerRule: "Height 0 belongs only to this Brick workspace. Every later positive height must be built directly from the row immediately below it.",
+      description: finalProposal.foundationLevelNarrative.previousLevelComparison,
+      peerRule: finalProposal.foundationLevelNarrative.sameLevelReason,
     },
   );
   const validated = finalValidation.valid && finalValidation.difficultyConsistency && finalValidation.sourceFidelity;
@@ -1279,14 +1217,11 @@ export async function branchFromConcept(input: {
       foundationSuggestions: [],
     };
     const scores = finalProposal.directions.map((direction) => direction.difficulty);
-    const levelStory = brickLevelDescription(
-      nextHeight,
-      knownConcepts,
-      finalProposal.directions.map((direction) => direction.title),
-      intent,
-      input.goal,
+    finalLevel = narrateLevel(
+      baseTargetLevel,
+      finalProposal.levelNarrative.previousLevelComparison,
+      finalProposal.levelNarrative.sameLevelReason,
     );
-    finalLevel = narrateLevel(baseTargetLevel, levelStory.description, levelStory.peerRule);
 
     let validationBase = deterministicValidationBaseline("Brick stack layer");
     if (getEnv().PEDAGOGY_VALIDATION_MODE === "llm") {

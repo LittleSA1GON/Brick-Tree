@@ -31,6 +31,10 @@ describe("structured schemas", () => {
         difficultyExplanation: "It combines abstraction, algebra, and multiple representations.",
         difficultyFactors: ["Abstraction", "Prerequisite load"],
       },
+      levelNarrative: {
+        sameLevelReason: "Limits, derivatives, integrals, and series require comparable algebraic fluency and abstract function reasoning.",
+        previousLevelComparison: "This layer cuts calculus into narrower ideas that each isolate one major kind of change or accumulation, making them one conceptual step more focused than calculus as a whole.",
+      },
       children: [child("Limits"), child("Derivatives"), child("Integrals"), child("Series")],
       confidence: 0.9,
     });
@@ -46,6 +50,10 @@ describe("structured schemas", () => {
         difficulty: 3,
         difficultyLabel: "Intermediate",
         difficultyExplanation: "It combines algebraic fluency with abstract change.",
+      },
+      levelNarrative: {
+        sameLevelReason: "The four branches use similar algebraic and function reasoning, so none requires a substantially larger prerequisite jump than the others.",
+        previousLevelComparison: "Each branch is narrower than calculus as a whole and can be learned as one direct conceptual cut from the parent topic.",
       },
       children: [
         { title: "Limits", description: "How values approach a target.", difficulty: 3, difficultyLabel: "Intermediate", difficultyExplanation: "Requires function intuition." },
@@ -73,6 +81,10 @@ describe("structured schemas", () => {
         difficultyExplanation: "Hard.",
         difficultyFactors: [],
       },
+      levelNarrative: {
+        sameLevelReason: "These proposed branches are intended to require comparable effort.",
+        previousLevelComparison: "They are intended to be one direct cut beneath the parent.",
+      },
       children: [child("Limits"), child("Derivatives")],
       confidence: 0.9,
     });
@@ -86,6 +98,14 @@ describe("structured schemas", () => {
         difficulty: 2,
         difficultyLabel: "Beginner",
         difficultyExplanation: "The foundation supports one-step applied concepts.",
+      },
+      foundationLevelNarrative: {
+        sameLevelReason: "The learner's algebra and basic programming are both treated as usable starting foundations rather than new material to learn first.",
+        previousLevelComparison: "Height 0 is the learner's baseline, so there is no generated layer below it.",
+      },
+      levelNarrative: {
+        sameLevelReason: "Functions, data structures, descriptive statistics, and Boolean logic all add a comparable beginner-level abstraction to the supplied foundation.",
+        previousLevelComparison: "The new row is one step more complex because each brick introduces one new reusable idea while still depending only on the learner's existing algebra or programming foundation.",
       },
       directions: [
         { title: "Functions", description: "Reusable mappings from inputs to outputs.", whyReachable: "Builds directly on algebra.", difficulty: 2, difficultyLabel: "Beginner", difficultyExplanation: "Uses familiar algebraic relationships." },

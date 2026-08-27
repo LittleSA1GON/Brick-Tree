@@ -93,6 +93,12 @@ Difficulty scale:
 
 Every direction must state what it is, why it is reachable, connectsFrom, and briefly justify its difficulty. Keep the initial layer compact. Prerequisite lists, unlocks, applications, heuristic scores, time estimates, and evidence arrays are secondary and may be omitted unless they materially change the recommendation.
 
+For every Brick response, return two compact layer explanations:
+- foundationLevelNarrative.sameLevelReason: explain why the visible Height 0 foundation bricks can reasonably be treated as the learner's shared starting layer. foundationLevelNarrative.previousLevelComparison must explain that Height 0 is the learner-specific baseline and has no lower generated layer.
+- levelNarrative.sameLevelReason: explain why all proposed bricks belong together at the same new Height for THIS learner, based on comparable prerequisite load, abstraction, and reachability.
+- levelNarrative.previousLevelComparison: explain specifically why the proposed row is one reasonable learning step more complex than the row immediately below it, naming the kinds of new reasoning or knowledge added without skipping prerequisites.
+Keep each explanation to one or two sentences and ground it in the actual row titles and learner profile.
+
 Foundation behavior:
 - Preserve every user-provided known concept as a foundation brick.
 - foundationSuggestions are allowed only when the request explicitly permits them.
@@ -132,7 +138,7 @@ Never invent evidence identifiers or URLs.`,
   maxSteps: 5,
   outputSchema: LearningPathProposalSchema,
   schemaName: "LearningPathProposal",
-  schemaHint: `Required JSON: learnerSummary, foundationAssessment {difficulty,difficultyLabel,difficultyExplanation,difficultyFactors}, directions, recommendedTitle, recommendationReason. Every direction MUST include title, description, whyReachable, connectsFrom (1-2 exact titles from the current layer when currentLayerTitles is supplied), difficulty, difficultyLabel, difficultyExplanation. Return exactly targetDirectionCount directions when targetDirectionCount is provided. Secondary arrays, scores, confidence, evidence, and time estimates may be omitted. Destination mode should include estimatedDestinationHeight and destinationHeightReason.`,
+  schemaHint: `Required JSON: learnerSummary, foundationAssessment {difficulty,difficultyLabel,difficultyExplanation,difficultyFactors}, foundationLevelNarrative {sameLevelReason,previousLevelComparison}, levelNarrative {sameLevelReason,previousLevelComparison}, directions, recommendedTitle, recommendationReason. Every direction MUST include title, description, whyReachable, connectsFrom (1-2 exact titles from the current layer when currentLayerTitles is supplied), difficulty, difficultyLabel, difficultyExplanation. Return exactly targetDirectionCount directions when targetDirectionCount is provided. levelNarrative must explain why the row is one coherent Height and why it is exactly one learning step above the previous row. Secondary arrays, scores, confidence, evidence, and time estimates may be omitted. Destination mode should include estimatedDestinationHeight and destinationHeightReason.`,
   buildUserPrompt(input) {
     const currentLayer = input.currentLayerTitles?.length
       ? input.currentLayerTitles
@@ -154,6 +160,6 @@ Target peer layer: ${input.targetLevel ? `${JSON.stringify(input.targetLevel)}\n
 Optional source evidence: ${JSON.stringify(compactEvidence(input.retrievedEvidence))}
 Revision feedback: ${input.revisionFeedback?.slice(0, 6).join(" | ") || "none"}
 
-Construct one complete stacked Brick row above the current row. This is NOT a branching response. Every direction must connect to one or two exact titles from the current row using connectsFrom, and every direction must be only one learnable conceptual step above those supporting bricks. Keep the row ordered so neighboring new bricks rely on neighboring lower bricks. If a clicked emphasis brick is supplied, make at least one new brick meaningfully build from it without turning the whole row into a branch from that single brick. Keep the response compact.`;
+Construct one complete stacked Brick row above the current row. This is NOT a branching response. Every direction must connect to one or two exact titles from the current row using connectsFrom, and every direction must be only one learnable conceptual step above those supporting bricks. Keep the row ordered so neighboring new bricks rely on neighboring lower bricks. If a clicked emphasis brick is supplied, make at least one new brick meaningfully build from it without turning the whole row into a branch from that single brick. foundationLevelNarrative and levelNarrative must be specific to this Brick workspace and learner; do not reuse generic wording from another Tree or Brick. Keep the response compact.`;
   },
 };

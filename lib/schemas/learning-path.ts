@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { DifficultyAssessmentSchema, DifficultyLabelSchema, DifficultyScoreSchema, EvidenceReferenceSchema } from "./concept";
+import {
+  DifficultyAssessmentSchema,
+  DifficultyLabelSchema,
+  DifficultyScoreSchema,
+  EvidenceReferenceSchema,
+  LevelNarrativeSchema,
+} from "./concept";
 import {
   DepthPreferenceSchema,
   KnowledgeLevelSchema,
@@ -74,6 +80,8 @@ export const LearningPathProposalSchema = z.object({
   learnerSummary: z.string().min(1).max(700),
   inferredAssumptions: z.array(z.string().min(1).max(180)).max(6).default([]),
   foundationAssessment: DifficultyAssessmentSchema,
+  foundationLevelNarrative: LevelNarrativeSchema,
+  levelNarrative: LevelNarrativeSchema,
   foundationSuggestions: z.array(z.string().min(1).max(120)).max(4).default([]),
   directions: z.array(LearningDirectionProposalSchema).min(2).max(10),
   recommendedTitle: z.string().min(1).max(120),

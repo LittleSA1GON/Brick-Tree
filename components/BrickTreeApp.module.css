@@ -1752,3 +1752,362 @@
     scroll-padding: 20vh 14vw;
   }
 }
+
+/* 0.8.4 adaptive viewport system.
+   Final overrides intentionally live at the end of the module so every major UI surface
+   responds to width, height, resolution and aspect ratio without changing graph semantics. */
+.landing,
+.experience {
+  --edge-x: clamp(10px, 1.7vw, 32px);
+  --edge-y: clamp(10px, 2vh, 28px);
+  --top-ui-h: clamp(44px, 6.2vh, 56px);
+  --rail-w: clamp(42px, 4.5vw, 70px);
+  --panel-radius: clamp(14px, 1.4vw, 24px);
+  --body-small: clamp(10px, 0.7vw + 0.25vh, 13px);
+  --body: clamp(13px, 0.75vw + 0.35vh, 17px);
+}
+
+/* Landing page scales from compact phones to ultrawide/high-resolution displays. */
+.landingBrand {
+  top: var(--edge-y);
+  left: var(--edge-x);
+  gap: clamp(8px, 0.8vw, 12px);
+  font-size: clamp(12px, 0.75vw + 0.25vh, 16px);
+}
+
+.landingCopy {
+  width: min(1120px, calc(100% - (var(--edge-x) * 2)));
+  padding-top: clamp(96px, 16vh, 200px);
+}
+
+.landingCopy h1 {
+  max-width: min(1120px, 94vw);
+  font-size: clamp(44px, min(8.5vw, 12.5vh), 126px);
+  line-height: clamp(.88, .9 + .02vw, .94);
+}
+
+.lead {
+  max-width: min(780px, 88vw);
+  margin-top: clamp(20px, 3vh, 34px);
+  font-size: clamp(15px, min(1.65vw, 2.7vh), 23px);
+}
+
+.landingFacts {
+  width: min(780px, calc(100% - (var(--edge-x) * 2)));
+  margin-top: clamp(30px, 5vh, 52px);
+  margin-bottom: clamp(44px, 8vh, 86px);
+  gap: clamp(10px, 1vw, 16px);
+}
+
+.landingFacts article {
+  min-height: clamp(112px, 18vh, 160px);
+  padding: clamp(16px, 1.5vw + .5vh, 26px);
+  border-radius: var(--panel-radius);
+}
+
+.landingFacts strong { font-size: clamp(15px, .8vw + .4vh, 19px); }
+.landingFacts p { font-size: clamp(13px, .65vw + .35vh, 16px); }
+
+.beginWrap { margin-top: clamp(24px, 4vh, 44px); }
+.beginSplit {
+  width: min(430px, calc(100vw - (var(--edge-x) * 2)));
+  height: clamp(58px, 8vh, 76px);
+}
+.beginSplit span { font-size: clamp(15px, .8vw + .4vh, 19px); }
+.beginSplit small { font-size: clamp(9px, .55vw + .2vh, 11px); }
+
+/* Fixed chrome scales with the viewport without crowding the graph. */
+.homeButton,
+.mapButton {
+  top: var(--edge-y);
+  width: var(--top-ui-h);
+  height: var(--top-ui-h);
+  border-radius: clamp(12px, 1vw, 16px);
+}
+.homeButton { left: var(--edge-x); }
+.mapButton { right: var(--edge-x); }
+
+.modeDock {
+  top: var(--edge-y);
+  width: clamp(176px, 18vw, 242px);
+  height: var(--top-ui-h);
+  padding: clamp(3px, .35vw, 5px);
+}
+.modeDock button { font-size: clamp(11px, .7vw + .2vh, 14px); }
+
+/* Depth / Height remains accessible at every viewport size. */
+.axisRail {
+  display: grid;
+  left: clamp(5px, 1.4vw, 29px);
+  max-height: min(72dvh, 620px);
+  gap: clamp(4px, .6vh, 8px);
+}
+.axisRail > div {
+  max-height: min(58dvh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.axisRail > div::-webkit-scrollbar { display: none; }
+.axisRail button {
+  width: clamp(30px, 3vw, 38px);
+  height: clamp(27px, 3.8vh, 32px);
+  gap: clamp(4px, .45vw, 7px);
+  font-size: clamp(9px, .55vw + .15vh, 11px);
+}
+.axisRail > span { font-size: clamp(7px, .45vw + .12vh, 9px); }
+
+.axisPopover {
+  left: clamp(36px, 3.8vw, 48px);
+  width: clamp(180px, 18vw, 250px);
+  max-height: min(42dvh, 260px);
+  overflow: auto;
+  padding: clamp(10px, .8vw, 14px);
+}
+.axisPopover strong { font-size: clamp(9px, .55vw + .15vh, 11px); }
+.axisPopover p { font-size: clamp(10px, .55vw + .18vh, 12px); }
+
+/* Main hierarchy viewport reserves only what the current chrome actually needs. */
+.hierarchyViewport {
+  inset:
+    calc(var(--edge-y) + var(--top-ui-h) + clamp(8px, 1.4vh, 18px))
+    var(--edge-x)
+    var(--edge-y)
+    var(--rail-w);
+  min-width: 0;
+  min-height: 0;
+}
+
+.hierarchyStage,
+.graphScroller {
+  min-width: 0;
+  min-height: 0;
+}
+
+.graphScroller {
+  scroll-padding:
+    clamp(100px, 24vh, 260px)
+    clamp(80px, 18vw, 300px);
+}
+
+/* Compact nodes remain readable but never occupy a disproportionate share of the screen. */
+.graphNodeWrapper .compactNode {
+  width: clamp(104px, min(10vw, 15vh), 138px);
+  min-height: clamp(68px, min(9.5vw, 12vh), 82px);
+  padding: clamp(7px, .6vw + .25vh, 10px);
+  border-radius: clamp(10px, .8vw, 13px);
+}
+.graphNodeWrapper .compactNode strong {
+  font-size: clamp(11px, min(.9vw, 1.8vh), 14px);
+}
+.graphNodeWrapper .compactNode p {
+  font-size: clamp(8px, min(.62vw, 1.25vh), 10px);
+  line-height: 1.3;
+}
+.graphNodeWrapper .compactNode small { font-size: clamp(6px, .45vw, 8px); }
+
+/* Focused nodes grow enough to read, while still leaving surrounding hierarchy visible. */
+.graphNodeWrapper .knowledgeNode,
+.knowledgeNode {
+  width: clamp(300px, min(36vw, 60vh), 450px);
+  max-width: calc(100vw - var(--rail-w) - (var(--edge-x) * 2));
+  max-height: min(72dvh, 660px);
+  padding: clamp(14px, 1.2vw + .45vh, 22px);
+  border-radius: clamp(15px, 1.3vw, 21px);
+  transition:
+    width .5s cubic-bezier(.16,.84,.16,1),
+    max-width .5s cubic-bezier(.16,.84,.16,1),
+    max-height .5s cubic-bezier(.16,.84,.16,1),
+    padding .4s ease,
+    border-color .4s ease,
+    box-shadow .4s ease;
+}
+
+/* Opening Read more expands the focused node sideways as well as vertically. */
+.graphNodeWrapper .knowledgeNode:has(.nodeDetails[open]),
+.knowledgeNode:has(.nodeDetails[open]) {
+  width: clamp(500px, min(58vw, 92vh), 760px);
+  max-width: min(
+    760px,
+    calc(100vw - var(--rail-w) - (var(--edge-x) * 2))
+  );
+  max-height: min(84dvh, 840px);
+  padding: clamp(18px, 1.65vw + .55vh, 28px);
+}
+.graphNodeWrapper .knowledgeNode h2,
+.knowledgeNode h2 {
+  font-size: clamp(21px, min(2.2vw, 3.7vh), 32px);
+}
+.graphNodeWrapper .nodeBrief,
+.nodeBrief { font-size: clamp(12px, min(1vw, 2vh), 15px); }
+
+.setupNode {
+  width: min(760px, calc(100vw - var(--rail-w) - (var(--edge-x) * 2)));
+  max-height: calc(100dvh - var(--top-ui-h) - (var(--edge-y) * 3));
+  overflow: auto;
+  padding: clamp(18px, 2vw, 30px);
+  border-radius: var(--panel-radius);
+}
+
+/* Persistent map adapts to both width and height. */
+.persistentMap {
+  right: var(--edge-x);
+  bottom: var(--edge-y);
+  width: clamp(150px, min(17vw, 28vh), 250px);
+  height: clamp(104px, min(18vh, 13vw), 168px);
+  border-radius: clamp(13px, 1.2vw, 18px);
+  padding: clamp(22px, 3.3vh, 28px) clamp(6px, .6vw, 9px) clamp(20px, 3vh, 24px);
+}
+.persistentMapTitle,
+.persistentMapHint,
+.persistentMapLaunch { font-size: clamp(7px, .48vw + .1vh, 9px); }
+
+.navigator {
+  width: min(clamp(320px, 42vw, 620px), 96vw);
+}
+.navigator header,
+.navigator footer { padding: clamp(14px, 1.5vw, 24px); }
+.miniGraph { min-height: clamp(170px, 30vh, 330px); }
+
+/* Short landscape windows: compress vertical chrome rather than clipping content. */
+@media (max-height: 720px) and (min-width: 700px) {
+  .landingCopy { padding-top: clamp(78px, 12vh, 104px); }
+  .landingCopy h1 { font-size: clamp(42px, min(7.2vw, 12vh), 86px); }
+  .lead { margin-top: 18px; }
+  .landingFacts { margin-top: 24px; margin-bottom: 34px; }
+  .landingFacts article { min-height: 96px; padding: 14px 18px; }
+  .beginWrap { margin-top: 18px; }
+  .beginSplit { height: 54px; }
+
+  .hierarchyViewport {
+    inset:
+      calc(var(--edge-y) + var(--top-ui-h) + 6px)
+      var(--edge-x)
+      var(--edge-y)
+      var(--rail-w);
+  }
+  .graphNodeWrapper .knowledgeNode,
+  .knowledgeNode { max-height: 66dvh; }
+  .persistentMap {
+    width: clamp(145px, 15vw, 210px);
+    height: clamp(94px, 17vh, 126px);
+  }
+}
+
+/* Very wide / ultrawide screens: cap central UI growth and keep hierarchy readable. */
+@media (min-aspect-ratio: 21/9) {
+  .landingCopy { width: min(1180px, 68vw); }
+  .landingFacts { width: min(800px, 48vw); }
+  .graphNodeWrapper .knowledgeNode,
+  .knowledgeNode { width: clamp(320px, 24vw, 440px); }
+  .graphNodeWrapper .knowledgeNode:has(.nodeDetails[open]),
+  .knowledgeNode:has(.nodeDetails[open]) { width: clamp(560px, 38vw, 760px); }
+  .persistentMap { width: clamp(200px, 13vw, 270px); }
+}
+
+/* Portrait tablets and phones. */
+@media (max-aspect-ratio: 4/5) {
+  .landingCopy { padding-top: clamp(92px, 13vh, 140px); }
+  .landingCopy h1 { font-size: clamp(42px, min(13vw, 9.5vh), 76px); }
+  .landingFacts { grid-template-columns: 1fr; }
+  .landingFacts article { min-height: auto; }
+
+  .hierarchyViewport {
+    inset:
+      calc(var(--edge-y) + var(--top-ui-h) + 8px)
+      max(6px, var(--edge-x))
+      calc(var(--edge-y) + clamp(104px, 16vh, 140px))
+      clamp(38px, 8vw, 54px);
+  }
+
+  .persistentMap {
+    width: clamp(145px, 38vw, 190px);
+    height: clamp(100px, 14vh, 128px);
+  }
+}
+
+@media (max-width: 700px) {
+  .landing,
+  .experience {
+    --edge-x: clamp(8px, 3vw, 16px);
+    --edge-y: clamp(8px, 2vh, 16px);
+    --top-ui-h: clamp(40px, 6.5vh, 46px);
+    --rail-w: clamp(36px, 10vw, 48px);
+  }
+
+  .landingCopy { width: calc(100% - (var(--edge-x) * 2)); }
+  .landingCopy h1 { font-size: clamp(42px, min(14vw, 10.5vh), 72px); }
+  .lead { max-width: 92vw; font-size: clamp(14px, 4vw, 17px); }
+  .landingFacts { width: calc(100% - (var(--edge-x) * 2)); }
+
+  .modeDock { width: clamp(164px, 48vw, 194px); }
+  .homeButton .brandIcon { transform: scale(.72); }
+
+  .axisRail { left: 3px; }
+  .axisRail button { width: 32px; padding: 0 2px; }
+  .axisPopover {
+    position: fixed;
+    left: clamp(44px, 12vw, 60px);
+    top: 50%;
+    width: min(220px, calc(100vw - 74px));
+    transform: translateY(-50%);
+  }
+
+  .graphNodeWrapper .compactNode {
+    width: clamp(96px, 27vw, 118px);
+    min-height: 66px;
+  }
+
+  .graphNodeWrapper .knowledgeNode,
+  .knowledgeNode {
+    width: min(88vw, 360px);
+    max-width: min(88vw, 360px);
+    max-height: 64dvh;
+  }
+
+  .graphNodeWrapper .knowledgeNode:has(.nodeDetails[open]),
+  .knowledgeNode:has(.nodeDetails[open]) {
+    width: min(94vw, 520px);
+    max-width: min(94vw, 520px);
+    max-height: 78dvh;
+  }
+
+  .setupNode {
+    width: min(94vw, 620px);
+    max-height: calc(100dvh - var(--top-ui-h) - 44px);
+  }
+
+  .persistentMap {
+    right: 8px;
+    bottom: 8px;
+    width: clamp(140px, 40vw, 176px);
+    height: clamp(96px, 15vh, 118px);
+  }
+
+  .navigator { width: 100vw; }
+  .navigator header,
+  .navigator footer { padding: 13px 14px; }
+}
+
+/* Extremely small/short devices retain usable controls and scrolling. */
+@media (max-width: 430px), (max-height: 520px) {
+  .modeDock { width: 156px; }
+  .modeDock button { font-size: 10px; }
+  .axisRail > span { font-size: 7px; }
+  .axisRail button { height: 25px; font-size: 9px; }
+  .persistentMap { width: 132px; height: 92px; }
+  .graphNodeWrapper .compactNode { width: 92px; min-height: 62px; }
+  .graphNodeWrapper .compactNode p { -webkit-line-clamp: 1; }
+  .navigationHint { display: none; }
+}
+
+/* High-density / very large displays get slightly sharper spacing without oversized cards. */
+@media (min-width: 1800px) and (min-height: 1000px) {
+  .landingCopy { max-width: 1180px; }
+  .graphNodeWrapper .compactNode { width: 138px; min-height: 82px; }
+  .graphNodeWrapper .knowledgeNode,
+  .knowledgeNode { width: 430px; }
+  .graphNodeWrapper .knowledgeNode:has(.nodeDetails[open]),
+  .knowledgeNode:has(.nodeDetails[open]) { width: 760px; }
+  .persistentMap { width: 260px; height: 176px; }
+}

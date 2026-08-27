@@ -61,6 +61,13 @@ describe("Brick Tree 0.8 interaction shell", () => {
     expect(pathAgent).toContain("Do not infer an AI, machine-learning");
   });
 
+  it("shows agent-generated explanations for why nodes share a Depth/Height and how the layer changes", () => {
+    expect(appSource).toContain("Why these nodes share this level");
+    expect(appSource).toContain("Compared with the previous layer");
+    expect(pathAgent).toContain("levelNarrative.sameLevelReason");
+    expect(pathAgent).toContain("levelNarrative.previousLevelComparison");
+  });
+
   it("loads resources automatically for the focused node", () => {
     expect(appSource).toContain("resourceAttemptedRef");
     expect(appSource).toContain("Loading resources for this node");
