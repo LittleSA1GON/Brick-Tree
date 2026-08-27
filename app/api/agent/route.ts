@@ -80,6 +80,7 @@ export async function POST(request: Request) {
       const result = await discoverLearningPath({
         intent: action.traversal.intent,
         knownConcepts,
+        rawKnowledgeInput: action.rawKnowledgeInput,
         goal,
         learnerProfile: action.learnerProfile,
         documents,

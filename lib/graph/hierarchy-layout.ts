@@ -122,16 +122,30 @@ function treeLayout(
   return { width, height, positions };
 }
 
+/**
+ * Brick is deliberately laid out as a wall, not as a branching tree.
+ *
+ * Higher rows are centered above lower rows and use stable input order. The
+ * orchestrator creates only local one/two-brick support edges between adjacent
+ * rows, so the visual result stays readable as a stack:
+ *
+ *        +2   [ ][ ][ ][ ][ ]
+ *              |\/|\/|\/|
+ *        +1     [ ][ ][ ][ ]
+ *                |\/|\/|
+ *         0       [ ][ ][ ]
+ *
+ * The canvas is bottom-origin: Height 0 is physically the lowest row and each
+ * positive height moves upward. Row spacing and horizontal node spacing are
+ * independent, which prevents nodes from overlapping even as the wall widens.
+ */
 function brickLayout(
   nodes: ConceptNode[],
-  edges: ConceptEdge[],
+  _edges: ConceptEdge[],
   options: Required<LayoutOptions>,
 ): HierarchyLayout {
-  const graphEdges = visibleEdges(nodes, edges);
-  const inputOrder = new Map(nodes.map((node, index) => [node.id, index]));
   const grouped = new Map<number, ConceptNode[]>();
-  const parents = new Map<string, string[]>();
-  const children = new Map<string, string[]>();
+  const inputOrder = new Map(nodes.map((node, index) => [node.id, index]));
 
   for (const node of nodes) {
     const row = grouped.get(node.depth) ?? [];
@@ -139,152 +153,51 @@ function brickLayout(
     grouped.set(node.depth, row);
   }
 
-  for (const edge of graphEdges) {
-    const parentList = parents.get(edge.target) ?? [];
-    if (!parentList.includes(edge.source)) parentList.push(edge.source);
-    parents.set(edge.target, parentList);
-
-    const childList = children.get(edge.source) ?? [];
-    if (!childList.includes(edge.target)) childList.push(edge.target);
-    children.set(edge.source, childList);
-  }
-
   const depths = [...grouped.keys()].sort((a, b) => a - b);
   const minDepth = depths[0] ?? 0;
   const maxDepth = depths.at(-1) ?? minDepth;
   const layerCount = Math.max(0, maxDepth - minDepth);
 
-  const maxRow = Math.max(
+  for (const row of grouped.values()) {
+    row.sort(
+      (a, b) =>
+        (inputOrder.get(a.id) ?? 0) -
+        (inputOrder.get(b.id) ?? 0),
+    );
+  }
+
+  const widestRowCount = Math.max(
     1,
     ...[...grouped.values()].map((row) => row.length),
   );
 
   const width = Math.max(
     640,
-    options.paddingX * 2 + (maxRow - 1) * options.nodeGap,
+    options.paddingX * 2 + Math.max(0, widestRowCount - 1) * options.nodeGap,
   );
 
-  /*
-   * Brick uses a true bottom-origin coordinate system:
-   *
-   *      destination / highest layer
-   *                 +3
-   *                 +2
-   *                 +1
-   *      foundations  0   <- bottom row
-   *
-   * destinationOffset reserves room above the generated Brick layers.
-   * The extra 56px below the foundation row keeps compact/focused cards from
-   * touching the canvas edge and makes the entire bottom row scroll-readable.
-   */
   const topInset = options.destinationOffset + options.paddingY;
-  const bottomInset = options.paddingY + 56;
+  const bottomInset = options.paddingY + 72;
   const height = Math.max(
-    180,
+    220,
     topInset + layerCount * options.rowGap + bottomInset,
   );
   const foundationY = height - bottomInset;
 
   const positions = new Map<string, HierarchyPoint>();
 
-  // Place the lowest/foundation row first in stable learner-input order.
-  const baseRow = [...(grouped.get(minDepth) ?? [])];
-  baseRow
-    .sort((a, b) => (inputOrder.get(a.id) ?? 0) - (inputOrder.get(b.id) ?? 0))
-    .forEach((node, index) => {
-      const x =
-        baseRow.length === 1
-          ? width / 2
-          : options.paddingX +
-            index *
-              ((width - options.paddingX * 2) /
-                Math.max(1, baseRow.length - 1));
-
-      positions.set(node.id, {
-        x,
-        y: foundationY,
-      });
-    });
-
-  // Build each higher Brick row from its actual parent anchors.
-  for (const depth of depths.slice(1)) {
-    const row = [...(grouped.get(depth) ?? [])];
-
-    row.sort((a, b) => {
-      const aParentXs = (parents.get(a.id) ?? [])
-        .map((id) => positions.get(id)?.x)
-        .filter((value): value is number => value !== undefined);
-
-      const bParentXs = (parents.get(b.id) ?? [])
-        .map((id) => positions.get(id)?.x)
-        .filter((value): value is number => value !== undefined);
-
-      const aAnchor = aParentXs.length
-        ? average(aParentXs)
-        : (inputOrder.get(a.id) ?? 0) * options.nodeGap;
-
-      const bAnchor = bParentXs.length
-        ? average(bParentXs)
-        : (inputOrder.get(b.id) ?? 0) * options.nodeGap;
-
-      return aAnchor - bAnchor;
-    });
-
-    const anchors = row.map((node) => {
-      const parentXs = (parents.get(node.id) ?? [])
-        .map((id) => positions.get(id)?.x)
-        .filter((value): value is number => value !== undefined);
-
-      return parentXs.length ? average(parentXs) : width / 2;
-    });
-
-    const placed: number[] = [];
-
-    for (let index = 0; index < row.length; index += 1) {
-      const minimumX =
-        index === 0
-          ? options.paddingX
-          : placed[index - 1] + options.nodeGap;
-
-      placed.push(Math.max(minimumX, anchors[index]));
-    }
-
-    const overflow = placed.length
-      ? placed[placed.length - 1] - (width - options.paddingX)
-      : 0;
-
-    if (overflow > 0) {
-      for (let index = 0; index < placed.length; index += 1) {
-        placed[index] -= overflow;
-      }
-    }
-
+  for (const depth of depths) {
+    const row = grouped.get(depth) ?? [];
+    const rowWidth = Math.max(0, row.length - 1) * options.nodeGap;
+    const startX = (width - rowWidth) / 2;
     const y = foundationY - (depth - minDepth) * options.rowGap;
 
     row.forEach((node, index) => {
       positions.set(node.id, {
-        x: placed[index],
+        x: startX + index * options.nodeGap,
         y,
       });
     });
-  }
-
-  // Pull lower rows gently beneath the upper branches they actually support.
-  // This keeps the graph tree-like instead of alphabetically columned.
-  for (const depth of [...depths].reverse().slice(1)) {
-    const row = grouped.get(depth) ?? [];
-
-    for (const node of row) {
-      const childXs = (children.get(node.id) ?? [])
-        .map((id) => positions.get(id)?.x)
-        .filter((value): value is number => value !== undefined);
-
-      const point = positions.get(node.id);
-
-      if (point && childXs.length) {
-        point.x = (point.x + average(childXs)) / 2;
-      }
-    }
   }
 
   return { width, height, positions };
@@ -297,10 +210,10 @@ export function buildHierarchyLayout(
   options: LayoutOptions = {},
 ): HierarchyLayout {
   const resolved: Required<LayoutOptions> = {
-    nodeGap: options.nodeGap ?? 138,
-    rowGap: options.rowGap ?? 96,
-    paddingX: options.paddingX ?? 78,
-    paddingY: options.paddingY ?? 46,
+    nodeGap: options.nodeGap ?? 160,
+    rowGap: options.rowGap ?? 104,
+    paddingX: options.paddingX ?? 82,
+    paddingY: options.paddingY ?? 48,
     destinationOffset: options.destinationOffset ?? 0,
   };
 

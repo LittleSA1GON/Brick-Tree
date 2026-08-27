@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import type { ConceptEdge, ConceptNode, GraphLevelDescriptor, ResourceLink } from "@/lib/schemas/concept";
 import type { ExtractedDocument } from "@/lib/schemas/documents";
 import type { LearnerProfile as LearnerProfileType, LearningPathProposal } from "@/lib/schemas/learning-path";
@@ -28,6 +29,7 @@ import { LearnerProfile } from "@/components/learning/LearnerProfile";
 import { DocumentSources } from "@/components/learning/DocumentSources";
 import { SessionTransfer } from "@/components/session/SessionTransfer";
 import { normalizeConceptTitle } from "@/lib/utils/text";
+import { parseBrickKnowledgeInput } from "@/lib/learning/brick-input";
 import {
   createPortableSessionFile,
   createPortableWorkspaceFile,
@@ -133,7 +135,7 @@ function uniqueLevels(levels: GraphLevelDescriptor[]): GraphLevelDescriptor[] {
 }
 
 function parseKnownConcepts(input: string): string[] {
-  return [...new Set(input.split(/[\n,;]+/).map((value) => value.trim()).filter(Boolean))].slice(0, 60);
+  return parseBrickKnowledgeInput(input);
 }
 
 function migrateNode(node: ConceptNode): ConceptNode {
@@ -197,6 +199,7 @@ export function BrickTreeApp() {
   const [explanationLoadingNodeId, setExplanationLoadingNodeId] = useState<string>();
   const [explanations, setExplanations] = useState<Record<string, AdaptiveExplanation>>({});
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [graphZoom, setGraphZoom] = useState(1);
   const requestRef = useRef<AbortController | null>(null);
   const resourceAttemptedRef = useRef<Set<string>>(new Set());
 
@@ -426,12 +429,13 @@ export function BrickTreeApp() {
         setTrace(response.trace as AgentTraceEvent[]);
         setWarnings(response.warnings);
       } else {
-        if (!knownConcepts.length) throw new Error("Add at least one thing you already know.");
+        if (!knownInput.trim()) throw new Error("Add what you already understand, even if it is a sentence or says you are starting from scratch.");
         if (brickIntent === "destination" && !goal.trim()) throw new Error("Add a destination first.");
         const response = await callAgent<BrickData>({
           action: "navigate",
           traversal,
           knownConcepts,
+          rawKnowledgeInput: knownInput.trim(),
           goal: brickIntent === "destination" ? goal.trim() : undefined,
           learnerProfile: nextProfile,
           documents: agentDocuments,
@@ -487,7 +491,7 @@ export function BrickTreeApp() {
           : nextTraversal.intent === "analyze-question"
             ? `Opening another lens on ${node.title}…`
             : `Tracing what sits underneath ${node.title}…`
-        : `Building outward from ${node.title}…`,
+        : `Constructing the next Brick row above the current top layer, with ${node.title} as the emphasis…`,
     );
     setLoadingNodeId(nodeId);
     try {
@@ -529,7 +533,7 @@ export function BrickTreeApp() {
 
   async function explainNode(nodeId: string, level: ExplanationLevel) {
     const node = nodes.find((item) => item.id === nodeId);
-    if (!node || explanations[nodeId]) return;
+    if (!node || explanations[nodeId]?.level === level) return;
     setExplanationLoadingNodeId(nodeId);
     setError(undefined);
     try {
@@ -541,7 +545,13 @@ export function BrickTreeApp() {
         documents: agentDocuments,
       });
       if (!response.data) throw new Error("No explanation returned.");
-      setExplanations((current) => ({ ...current, [node.id]: response.data! }));
+      const adapted = { ...response.data, level } satisfies AdaptiveExplanation;
+      setExplanations((current) => ({ ...current, [node.id]: adapted }));
+      setNodes((current) => current.map((item) => item.id === nodeId ? {
+        ...item,
+        prerequisites: adapted.prerequisites?.length ? adapted.prerequisites : item.prerequisites,
+        whatItUnlocks: adapted.whatItUnlocks?.length ? adapted.whatItUnlocks : item.whatItUnlocks,
+      } : item));
       setTrace((current) => [...current, ...(response.trace as AgentTraceEvent[])].slice(-100));
     } catch (requestError) {
       setError((requestError as Error).message);
@@ -567,6 +577,7 @@ export function BrickTreeApp() {
       setTrace((current) => [...current, ...(response.trace as AgentTraceEvent[])].slice(-100));
       setWarnings(response.warnings);
     } catch (requestError) {
+      resourceAttemptedRef.current.delete(`${activeWorkspaceId ?? "workspace"}:${nodeId}`);
       setError((requestError as Error).message);
     } finally {
       setResourceLoadingNodeId(undefined);
@@ -825,18 +836,28 @@ export function BrickTreeApp() {
       </button>
 
       <ModeDock mode={mode} onChange={switchMode} />
+      {mapNodes.length > 0 ? (
+        <ZoomControls
+          value={graphZoom}
+          onDecrease={() => setGraphZoom((value) => Math.max(0.65, Math.round((value - 0.1) * 100) / 100))}
+          onIncrease={() => setGraphZoom((value) => Math.min(1.45, Math.round((value + 0.1) * 100) / 100))}
+          onReset={() => setGraphZoom(1)}
+        />
+      ) : null}
 
       <AxisRail
+        key={`${activeWorkspaceId ?? mode}:${mode}`}
         axis={modeAxis(mode)}
         levels={availableLevels}
         activeLevel={focusNode ? nodeLevel(focusNode) : 0}
         descriptors={levels}
+        dismissKey={focusNode?.id ?? selectedNodeId ?? "none"}
         onSelect={selectLevel}
       />
 
       <div className={styles.hierarchyViewport}>
         {!nodes.length ? (
-          <section className={`${styles.setupSection} ${mode === "brick" ? styles.setupBottom : styles.setupTop}`}>
+          <section className={styles.setupSection}>
             <SetupNode
               mode={mode}
               treeIntent={treeIntent}
@@ -849,7 +870,6 @@ export function BrickTreeApp() {
               busyLabel={busyLabel}
               error={error}
               warnings={warnings}
-              onModeChange={switchMode}
               onTreeIntentChange={setTreeIntent}
               onBrickIntentChange={setBrickIntent}
               onTopicChange={setTopic}
@@ -873,6 +893,7 @@ export function BrickTreeApp() {
           <HierarchyStage
             key={`${activeWorkspaceId ?? "workspace"}`}
             mode={mode}
+            zoom={graphZoom}
             nodes={mapNodes}
             edges={edges}
             focusNode={focusNode}
@@ -981,22 +1002,66 @@ function ModeDock({ mode, onChange }: { mode: PrimaryMode; onChange: (mode: Prim
   );
 }
 
-function AxisRail({ axis, levels, activeLevel, descriptors, onSelect }: {
+
+function ZoomControls({ value, onDecrease, onIncrease, onReset }: {
+  value: number;
+  onDecrease: () => void;
+  onIncrease: () => void;
+  onReset: () => void;
+}) {
+  return (
+    <div className={styles.zoomControls} aria-label="Graph zoom controls">
+      <button type="button" onClick={onDecrease} disabled={value <= 0.65} aria-label="Zoom out">−</button>
+      <button type="button" className={styles.zoomValue} onClick={onReset} aria-label="Reset graph zoom">{Math.round(value * 100)}%</button>
+      <button type="button" onClick={onIncrease} disabled={value >= 1.45} aria-label="Zoom in">+</button>
+    </div>
+  );
+}
+
+function AxisRail({ axis, levels, activeLevel, descriptors, dismissKey, onSelect }: {
   axis: "Depth" | "Height";
   levels: number[];
   activeLevel: number;
   descriptors: GraphLevelDescriptor[];
+  dismissKey: string;
   onSelect: (level: number) => void;
 }) {
   const [openLevel, setOpenLevel] = useState<number>();
+  const railRef = useRef<HTMLElement | null>(null);
   const axisKey = axis === "Depth" ? "depth" : "height";
   const available = levels.length ? levels : [0];
   const descriptor = openLevel === undefined
     ? undefined
     : descriptors.find((item) => item.axis === axisKey && item.index === Math.abs(openLevel));
 
+  useEffect(() => {
+    setOpenLevel(undefined);
+  }, [dismissKey]);
+
+  useEffect(() => {
+    if (openLevel === undefined) return;
+
+    const closeWhenOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (!railRef.current?.contains(target)) setOpenLevel(undefined);
+    };
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpenLevel(undefined);
+    };
+
+    document.addEventListener("pointerdown", closeWhenOutside);
+    document.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      document.removeEventListener("pointerdown", closeWhenOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [openLevel]);
+
   return (
-    <aside className={styles.axisRail} aria-label={`${axis} levels`}>
+    <aside ref={railRef} className={styles.axisRail} aria-label={`${axis} levels`}>
       <div>
         {available.map((level) => (
           <button
@@ -1017,13 +1082,20 @@ function AxisRail({ axis, levels, activeLevel, descriptors, onSelect }: {
       {openLevel !== undefined ? (
         <div className={styles.axisPopover}>
           <strong>{axis} {openLevel > 0 ? `+${openLevel}` : openLevel}</strong>
+          <small>Why these nodes share this level</small>
+          <p>{descriptor?.peerRule || (openLevel === 0
+            ? axis === "Depth"
+              ? "Depth 0 contains the single root concept that defines this Tree's starting reference."
+              : "Height 0 contains the learner's stated foundation bricks, which define this Brick workspace's starting reference."
+            : "The nodes on this layer are intended to require comparable prerequisite knowledge and reasoning effort.")}</p>
+          <small>{openLevel === 0 ? "Why this is the baseline" : "Compared with the previous layer"}</small>
           <p>{descriptor?.description || (openLevel === 0
             ? axis === "Depth"
-              ? "Depth 0 is the concept or question you chose as the root of this Tree."
-              : "Height 0 is the foundation knowledge you supplied to start this Brick map."
+              ? "This root is the concept or question the learner chose before any cuts are made."
+              : "This foundation is the knowledge the learner supplied before any higher Brick layers are constructed."
             : axis === "Depth"
-              ? "One branch below the previous Tree layer. Each step cuts the focused idea into one directly understandable layer."
-              : "One construction layer above the previous Brick layer. Each step adds only directly reachable knowledge.")}</p>
+              ? "This cut should be one directly understandable step simpler, more foundational, or more specific than its parent layer."
+              : "This row should be one directly reachable learning step more complex than the Brick row below it.")}</p>
         </div>
       ) : null}
     </aside>
@@ -1041,6 +1113,7 @@ function Buffer({ label }: { label?: string }) {
 
 function HierarchyStage({
   mode,
+  zoom,
   nodes,
   edges,
   focusNode,
@@ -1065,6 +1138,7 @@ function HierarchyStage({
   onDismissMessages,
 }: {
   mode: PrimaryMode;
+  zoom: number;
   nodes: ConceptNode[];
   edges: ConceptEdge[];
   focusNode?: ConceptNode;
@@ -1089,6 +1163,7 @@ function HierarchyStage({
   onDismissMessages: () => void;
 }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const [viewportSize, setViewportSize] = useState({ width: 1200, height: 760 });
   const destination = mode === "brick" && learningPath?.estimatedDestinationHeight && goal.trim()
     ? {
         title: goal.trim(),
@@ -1097,28 +1172,55 @@ function HierarchyStage({
       }
     : undefined;
 
-  const layout = useMemo(() => buildHierarchyLayout(mode, nodes, edges, {
-    nodeGap: 190,
-    rowGap: mode === "tree" ? 178 : 168,
-    // Real canvas buffer keeps focused cards readable at every edge.
-    paddingX: 360,
-    paddingY: mode === "tree" ? 340 : 380,
-    destinationOffset: destination ? 126 : 0,
-  }), [mode, nodes, edges, destination]);
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const update = () => setViewportSize({ width: scroller.clientWidth || 1200, height: scroller.clientHeight || 760 });
+    update();
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : undefined;
+    observer?.observe(scroller);
+    window.addEventListener("resize", update);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, []);
+
+  const layout = useMemo(() => {
+    const aspect = viewportSize.width / Math.max(1, viewportSize.height);
+    const nodeGap = Math.round(Math.max(250, Math.min(aspect > 1.8 ? 380 : 340, viewportSize.width * (aspect > 1.8 ? 0.2 : 0.28))));
+    const rowGap = Math.round(Math.max(158, Math.min(220, viewportSize.height * 0.24)));
+    const paddingX = Math.round(Math.max(220, Math.min(420, viewportSize.width * 0.3)));
+    const paddingY = Math.round(Math.max(240, Math.min(420, viewportSize.height * 0.42)));
+    return buildHierarchyLayout(mode, nodes, edges, {
+      nodeGap: mode === "tree" ? nodeGap : Math.max(nodeGap, 280),
+      rowGap,
+      paddingX,
+      paddingY: mode === "tree" ? paddingY : Math.max(paddingY, 300),
+      destinationOffset: destination ? 126 : 0,
+    });
+  }, [mode, nodes, edges, destination, viewportSize]);
+
+  const scaledWidth = Math.max(viewportSize.width, Math.ceil(layout.width * zoom));
+  const scaledHeight = Math.max(viewportSize.height, Math.ceil(layout.height * zoom));
 
   useEffect(() => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
-    const target = scroller.querySelector<HTMLElement>('[data-focus-target="true"]');
-    if (!target) {
-      if (mode === "brick") scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
-      return;
-    }
     const timer = window.setTimeout(() => {
-      target.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
-    }, 40);
+      const target = scroller.querySelector<HTMLElement>('[data-focus-target="true"]');
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+        return;
+      }
+      const left = Math.max(0, (scroller.scrollWidth - scroller.clientWidth) / 2);
+      const top = mode === "brick"
+        ? Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+        : 0;
+      scroller.scrollTo({ left, top, behavior: "smooth" });
+    }, 60);
     return () => window.clearTimeout(timer);
-  }, [focusNode?.id, mode, layout.height, layout.width]);
+  }, [focusNode?.id, mode, scaledHeight, scaledWidth, nodes.length, edges.length, zoom]);
 
   const topBrickDepth = nodes.reduce((value, node) => Math.max(value, node.depth), 0);
 
@@ -1127,14 +1229,20 @@ function HierarchyStage({
       <div ref={scrollerRef} className={styles.graphScroller} aria-label={`${mode === "tree" ? "Tree" : "Brick"} graph. Scroll vertically and horizontally; swipe on touch devices.`}>
         <div
           className={styles.graphCanvas}
-          style={{ width: layout.width, height: layout.height }}
+          style={{ width: scaledWidth, height: scaledHeight }}
           onClick={(event) => {
             if (event.target === event.currentTarget) onClearFocus();
           }}
         >
           <div
             className={`${styles.graphPlane} ${mode === "brick" ? styles.graphPlaneBrick : styles.graphPlaneTree}`}
-            style={{ width: layout.width, height: layout.height }}
+            style={{
+              width: layout.width,
+              height: layout.height,
+              left: scaledWidth / 2,
+              transform: `translateX(-50%) scale(${zoom})`,
+              transformOrigin: mode === "brick" ? "center bottom" : "center top",
+            }}
             onClick={(event) => {
               if (event.target === event.currentTarget) onClearFocus();
             }}
@@ -1282,7 +1390,6 @@ function SetupNode({
   busyLabel,
   error,
   warnings,
-  onModeChange,
   onTreeIntentChange,
   onBrickIntentChange,
   onTopicChange,
@@ -1312,7 +1419,6 @@ function SetupNode({
   busyLabel?: string;
   error?: string;
   warnings: string[];
-  onModeChange: (mode: PrimaryMode) => void;
   onTreeIntentChange: (intent: TreeIntent) => void;
   onBrickIntentChange: (intent: BrickIntent) => void;
   onTopicChange: (value: string) => void;
@@ -1337,12 +1443,6 @@ function SetupNode({
       <div className={styles.nodeMeta}><span>{axis} 0</span><b>Starting point</b></div>
       <header className={styles.setupHeader}>
         <div><p>Start here</p><h2>{mode === "tree" ? "What do you want to understand?" : "What do you already understand?"}</h2></div>
-        <label className={styles.compactSelect}>Direction
-          <select value={mode} onChange={(event) => onModeChange(event.target.value as PrimaryMode)}>
-            <option value="tree">Tree</option>
-            <option value="brick">Brick</option>
-          </select>
-        </label>
       </header>
       <form className={styles.setupForm} onSubmit={onGenerate}>
         {mode === "tree" ? (
@@ -1488,6 +1588,9 @@ function KnowledgeNode({
   onBrickFromHere: () => void;
   onDismissMessages: () => void;
 }) {
+  const detailPrerequisites = explanation?.prerequisites?.length ? explanation.prerequisites : node.prerequisites;
+  const detailUnlocks = explanation?.whatItUnlocks?.length ? explanation.whatItUnlocks : (node.whatItUnlocks ?? []);
+
   return (
     <article className={`${styles.knowledgeNode} ${selected ? styles.nodeSelected : ""}`}>
       <div className={styles.nodeMeta}>
@@ -1519,7 +1622,7 @@ function KnowledgeNode({
       <details
         className={styles.nodeDetails}
         onToggle={(event) => {
-          if (event.currentTarget.open && !explanation) onExplain();
+          if (event.currentTarget.open) onExplain();
         }}
       >
         <summary>{explanationLoading ? "Loading detail…" : "Open detail + resources"}</summary>
@@ -1536,11 +1639,11 @@ function KnowledgeNode({
           <div className={styles.detailGrid}>
             <section>
               <h3>Prerequisites</h3>
-              {node.prerequisites.length ? <ul>{node.prerequisites.slice(0, 6).map((item) => <li key={item}>{item}</li>)}</ul> : <p>None listed yet.</p>}
+              {detailPrerequisites.length ? <ul>{detailPrerequisites.slice(0, 6).map((item) => <li key={item}>{item}</li>)}</ul> : <p>{mode === "brick" && node.depth === 0 ? "This is part of your stated Height 0 foundation, so Brick Tree is treating it as a starting point." : "No additional prerequisite was identified for this node at your current learning level."}</p>}
             </section>
             <section>
               <h3>{mode === "tree" ? "What this branch reveals" : "What this brick unlocks"}</h3>
-              {node.whatItUnlocks?.length ? <ul>{node.whatItUnlocks.slice(0, 6).map((item) => <li key={item}>{item}</li>)}</ul> : <p>{mode === "tree" ? "Branch this node to cut it one level deeper." : "Construct the next layer to see what becomes reachable."}</p>}
+              {detailUnlocks.length ? <ul>{detailUnlocks.slice(0, 6).map((item) => <li key={item}>{item}</li>)}</ul> : <p>{generated ? `The visible next layer already captures the adjacent concepts currently reachable from ${node.title}.` : `Open or continue from ${node.title} to generate the next adjacent learning step.`}</p>}
             </section>
           </div>
 
@@ -1724,9 +1827,76 @@ function PersistentMiniMap({
   goal: string;
   onOpen: () => void;
 }) {
+  const mapRef = useRef<HTMLElement | null>(null);
+  const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
+  const [position, setPosition] = useState<{ left: number; top: number }>();
+
+  const clampPosition = useCallback((left: number, top: number) => {
+    const map = mapRef.current;
+    const width = map?.offsetWidth ?? 250;
+    const height = map?.offsetHeight ?? 168;
+    const margin = 8;
+    return {
+      left: Math.max(margin, Math.min(left, Math.max(margin, window.innerWidth - width - margin))),
+      top: Math.max(margin, Math.min(top, Math.max(margin, window.innerHeight - height - margin))),
+    };
+  }, []);
+
+  function startMapDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const map = mapRef.current;
+    if (!map) return;
+    const rect = map.getBoundingClientRect();
+    dragRef.current = {
+      pointerId: event.pointerId,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+    };
+    setPosition(clampPosition(rect.left, rect.top));
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+
+  function moveMap(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    setPosition(clampPosition(event.clientX - drag.offsetX, event.clientY - drag.offsetY));
+    event.preventDefault();
+  }
+
+  function endMapDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  useEffect(() => {
+    const onResize = () => setPosition((current) => current ? clampPosition(current.left, current.top) : current);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [clampPosition]);
+
   return (
-    <aside className={styles.persistentMap} aria-label={`${mode === "tree" ? "Tree" : "Brick"} mini map`}>
+    <aside
+      ref={mapRef}
+      className={styles.persistentMap}
+      aria-label={`${mode === "tree" ? "Tree" : "Brick"} mini map`}
+      style={position ? { left: position.left, top: position.top, right: "auto", bottom: "auto" } : undefined}
+    >
       <span className={styles.persistentMapTitle}>{mode === "tree" ? "Tree" : "Brick"} map</span>
+      <button
+        type="button"
+        className={styles.persistentMapDragHandle}
+        aria-label="Move mini map"
+        title="Drag to move mini map"
+        onPointerDown={startMapDrag}
+        onPointerMove={moveMap}
+        onPointerUp={endMapDrag}
+        onPointerCancel={endMapDrag}
+      >
+        <span aria-hidden="true">⠿</span>
+      </button>
       <MiniGraphMap
         mode={mode}
         nodes={nodes}

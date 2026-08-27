@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { getEnv } from "@/lib/config/env";
 import {
   createLLMProvider,
@@ -17,6 +18,15 @@ export type AgentRunResult<T> = {
   data: T;
   provider: string;
   model: string;
+};
+
+export type AgentHandoffMessage<TContext = Record<string, unknown>> = {
+  id: string;
+  fromAgent: string;
+  toAgent: string;
+  summary: string;
+  timestamp: string;
+  context: TContext;
 };
 
 export class AgentRuntime {
@@ -134,9 +144,6 @@ export class AgentRuntime {
             );
           }
 
-          // If another provider exists, move to it immediately instead of spending
-          // another request on the same provider. Same-provider repair is only a
-          // last resort when there is no configured fallback.
           if (hasAnotherProvider || !responseError?.allowsSameProviderRepair) break;
         }
       }
@@ -147,12 +154,38 @@ export class AgentRuntime {
     throw new Error(`${agentName} could not complete.`);
   }
 
-  handoff(fromAgent: string, toAgent: string, trace: TraceCollector, summary: string): void {
+  handoff<TContext extends Record<string, unknown>>(
+    fromAgent: string,
+    toAgent: string,
+    trace: TraceCollector,
+    input: { summary: string; context: TContext },
+  ): AgentHandoffMessage<TContext> {
     const source = this.agents.get(fromAgent);
+    this.agents.get(toAgent);
     if (!source.allowedHandoffs.includes(toAgent)) {
       throw new Error(`${fromAgent} is not allowed to hand off to ${toAgent}.`);
     }
-    trace.add("handoff", summary, { agent: fromAgent, metadata: { toAgent } });
+
+    const message: AgentHandoffMessage<TContext> = {
+      id: randomUUID(),
+      fromAgent,
+      toAgent,
+      summary: input.summary,
+      timestamp: new Date().toISOString(),
+      context: input.context,
+    };
+
+    trace.add("handoff", input.summary, {
+      agent: fromAgent,
+      metadata: {
+        handoffId: message.id,
+        fromAgent,
+        toAgent,
+        timestamp: message.timestamp,
+        context: message.context,
+      },
+    });
+    return message;
   }
 
   async executeTool(

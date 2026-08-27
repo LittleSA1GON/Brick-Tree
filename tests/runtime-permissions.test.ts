@@ -36,13 +36,36 @@ describe("generic agent runtime permissions", () => {
     await expect(runtime.executeTool("reader", "other", {}, trace)).rejects.toThrow("not allowed");
   });
 
-  it("enforces agent handoff allowlists", () => {
+  it("enforces handoff allowlists and emits structured collaboration messages", () => {
     const agents = new AgentRegistry()
       .register(agent("architect", [], ["validator"]))
       .register(agent("validator", [], []));
     const runtime = new AgentRuntime(agents, new ToolRegistry());
     const trace = new TraceCollector();
-    expect(() => runtime.handoff("architect", "validator", trace, "review")).not.toThrow();
-    expect(() => runtime.handoff("validator", "architect", trace, "retry")).toThrow("not allowed");
+    const message = runtime.handoff("architect", "validator", trace, {
+      summary: "review",
+      context: { nodeId: "node-1", titles: ["A", "B"] },
+    });
+
+    expect(message.id).toBeTruthy();
+    expect(message.fromAgent).toBe("architect");
+    expect(message.toAgent).toBe("validator");
+    expect(message.summary).toBe("review");
+    expect(message.timestamp).toBeTruthy();
+    expect(message.context).toEqual({ nodeId: "node-1", titles: ["A", "B"] });
+
+    const event = trace.list().find((item) => item.type === "handoff");
+    expect(event?.metadata?.handoffId).toBe(message.id);
+    expect(event?.metadata?.toAgent).toBe("validator");
+    expect(event?.metadata?.context).toEqual(message.context);
+
+    expect(() => runtime.handoff("validator", "architect", trace, {
+      summary: "retry",
+      context: {},
+    })).toThrow("not allowed");
+    expect(() => runtime.handoff("architect", "missing", trace, {
+      summary: "missing target",
+      context: {},
+    })).toThrow("Unknown agent");
   });
 });

@@ -11,6 +11,9 @@ export type AdaptiveExplanation = {
   sourceSummary?: string;
   example: string;
   keyTakeaway: string;
+  level?: ExplanationLevel;
+  prerequisites?: string[];
+  whatItUnlocks?: string[];
   evidence?: Array<{ documentId: string; sectionId: string; page?: number; heading?: string }>;
 };
 
@@ -144,18 +147,18 @@ export function NodeDetailPanel({
             <div className="detail-two-col">
               <section>
                 <h3>Roots / prerequisites</h3>
-                {node.prerequisites.length ? (
-                  <ul>{node.prerequisites.slice(0, 7).map((item) => <li key={item}>{item}</li>)}</ul>
+                {(explanation?.prerequisites?.length ? explanation.prerequisites : node.prerequisites).length ? (
+                  <ul>{(explanation?.prerequisites?.length ? explanation.prerequisites : node.prerequisites).slice(0, 7).map((item) => <li key={item}>{item}</li>)}</ul>
                 ) : (
-                  <p className="muted">No prerequisite list yet.</p>
+                  <p className="muted">No additional prerequisite was identified for this node at the selected learner level.</p>
                 )}
               </section>
               <section>
                 <h3>What it unlocks</h3>
-                {node.whatItUnlocks?.length ? (
-                  <ul>{node.whatItUnlocks.slice(0, 7).map((item) => <li key={item}>{item}</li>)}</ul>
+                {(explanation?.whatItUnlocks?.length ? explanation.whatItUnlocks : node.whatItUnlocks)?.length ? (
+                  <ul>{(explanation?.whatItUnlocks?.length ? explanation.whatItUnlocks : node.whatItUnlocks ?? []).slice(0, 7).map((item) => <li key={item}>{item}</li>)}</ul>
                 ) : (
-                  <p className="muted">Build from this brick to reveal future branches.</p>
+                  <p className="muted">No additional next-step concept was identified yet for this node.</p>
                 )}
               </section>
             </div>

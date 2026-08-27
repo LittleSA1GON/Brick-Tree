@@ -1,43 +1,57 @@
 import type { AgentSpec } from "@/lib/agents/spec";
-import { ResourceQueryPlanSchema, type ResourceQueryPlan } from "@/lib/schemas/resources";
+import { ResourceSelectionSchema, type ResourceCandidate, type ResourceSelection } from "@/lib/schemas/resources";
 import type { ConceptNode } from "@/lib/schemas/concept";
 import type { LearnerProfile } from "@/lib/schemas/learning-path";
 
-export type ResourcePlanInput = {
+export type ResourceSelectionInput = {
   node: ConceptNode;
   learnerProfile?: LearnerProfile;
-  webSearchAvailable: boolean;
+  candidates: ResourceCandidate[];
 };
 
-export const resourcePlannerAgent: AgentSpec<ResourcePlanInput, ResourceQueryPlan> = {
+export const resourceAgent: AgentSpec<ResourceSelectionInput, ResourceSelection> = {
   name: "resource_agent",
-  description: "Resource Agent is deciding which trustworthy sources to search for this concept.",
-  instructions: `You are Brick Tree's Resource Agent. Plan a small number of high-value searches for educational resources. Prefer authoritative or educational sources. Use Wikipedia for broad reference, academic search for research-oriented or advanced concepts, and web search only when configured and useful.
+  description: "Resource Agent evaluates retrieved sources for relevance, credibility, learner fit, difficulty fit, and diversity.",
+  instructions: `You are Brick Tree's Resource Agent. You receive a concept node, learner context, and a bounded list of already-retrieved resource candidates.
 
-Learner settings are semantic steering signals, not cosmetic formatting. Use knowledgeLevel, languageStyle, depthPreference, purpose, preferredResourceTypes, preferredExamples, and sourceMode to choose resources appropriate to the learner. A research learner may benefit from papers; a novice should usually receive clear introductory material before scholarly sources. If the learner requested documentation, courses, videos, or papers, reflect that in query wording when the source can support it.
+Your job is SELECTION, not URL generation. You may only return candidateId values that appear in the supplied candidate list. Never invent a resource, URL, title, provider, or candidate ID.
 
-Do not invent URLs; you only plan queries and source types.`,
-  allowedTools: [
-    "search_wikipedia",
-    "search_academic_resources",
-    "search_web",
-  ],
+Evaluate every candidate on these principles:
+1. Relevance: it should directly help with this exact node, not merely the broad subject.
+2. Credibility evidence: favor primary sources, official documentation, established educational or research institutions, reputable publishers, scholarly indexes, and sources with clear authorship/editorial responsibility. Judge evidence, not brand familiarity.
+3. Learner fit: match education level, knowledge level, purpose, preferred resource types/examples, language style, and depth preference when provided.
+4. Difficulty fit: introductory nodes should receive approachable explanations or guided material; advanced nodes may justify technical documentation, reference works, or primary research.
+5. Diversity: when quality is comparable, avoid returning several resources from the same host, publisher, provider, or identical format. Give the learner complementary ways to learn.
+
+Source-neutrality rule: DO NOT prefer or boost a website simply because it is famous or appears on a memorized preferred list. There is no preferred-domain whitelist. A lesser-known source may outrank a famous one when it is more relevant, better evidenced, more appropriate for the learner, or more useful for this exact node.
+
+Reject obvious SEO/content-farm pages, thin aggregators, unverifiable mirrors, unrelated results, and sources whose difficulty is a poor fit. Wikipedia/Wikimedia candidates should not be present; if one appears, do not select it.
+
+Return up to five candidate IDs in strongest learner-specific order, with concise reasons.`,
+  allowedTools: ["search_academic_resources", "search_web"],
   allowedHandoffs: [],
-  maxSteps: 5,
-  outputSchema: ResourceQueryPlanSchema,
-  schemaName: "ResourceQueryPlan",
-  schemaHint: `JSON field queries: 1-5 items, each {query:string, source:'wikipedia'|'academic'|'web', reason:string}.`,
+  maxSteps: 4,
+  outputSchema: ResourceSelectionSchema,
+  schemaName: "ResourceSelection",
+  schemaHint: `JSON fields: selected:[{candidateId:string,reason:string}] (1-5 items, candidateId MUST be copied from supplied candidates), summary:string. Do not return URLs.`,
   buildUserPrompt(input) {
-    return `Concept: ${input.node.title}
-Description: ${input.node.shortDescription}
-Difficulty: ${input.node.difficulty}/5 · ${input.node.difficultyLabel}
-Difficulty explanation: ${input.node.difficultyExplanation}
-Learner profile: ${JSON.stringify(input.learnerProfile ?? {})}
-General web search available: ${input.webSearchAvailable}
+    const profile = input.learnerProfile ?? {};
+    const candidates = input.candidates.map((candidate) => ({
+      candidateId: candidate.candidateId,
+      title: candidate.title,
+      source: candidate.source,
+      provider: candidate.provider,
+      type: candidate.type,
+      snippet: candidate.snippet,
+      credibilitySignals: candidate.credibilitySignals,
+      searchScore: candidate.searchScore,
+      citationCount: candidate.citationCount,
+      publishedAt: candidate.publishedAt,
+      urlHost: (() => {
+        try { return new URL(candidate.url).hostname.replace(/^www\./, ""); } catch { return "invalid"; }
+      })(),
+    }));
 
-Preferred resource types: ${(input.learnerProfile?.preferredResourceTypes ?? []).join(", ") || "not specified"}
-Preferred examples: ${(input.learnerProfile?.preferredExamples ?? []).join(", ") || "not specified"}
-
-Plan only searches that add real learning value and fit the learner's requested level, vernacular, purpose, and resource preferences.`;
+    return `Node: ${input.node.title}\nNode description: ${input.node.shortDescription}\nDifficulty: ${input.node.difficulty}/5 (${input.node.difficultyLabel})\nDifficulty explanation: ${input.node.difficultyExplanation}\nLearner profile: ${JSON.stringify(profile)}\nCandidates: ${JSON.stringify(candidates)}\n\nSelect only supplied candidate IDs. Optimize relevance + credibility evidence + learner fit + difficulty fit + source diversity without preferred-site bias.`;
   },
 };

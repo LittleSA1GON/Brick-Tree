@@ -14,8 +14,6 @@ export function mergeGraphPatch(
     ? {
         ...existingParent,
         ...parent,
-        // A node can have neighbors produced by more than one traversal intent.
-        // Never throw away previously generated semantic branches.
         childIds: [...new Set([...existingParent.childIds, ...parent.childIds])],
         resources: parent.resources.length ? parent.resources : existingParent.resources,
         origins: [
@@ -25,11 +23,39 @@ export function mergeGraphPatch(
         ],
       }
     : parent;
-  const replaced = currentNodes.map((node) => (node.id === parent.id ? mergedParent : node));
-  if (!replaced.some((node) => node.id === parent.id)) replaced.push(mergedParent);
+
+  let mergedNodes = currentNodes.map((node) =>
+    node.id === parent.id ? mergedParent : node,
+  );
+  if (!mergedNodes.some((node) => node.id === parent.id)) {
+    mergedNodes.push(mergedParent);
+  }
+
+  mergedNodes = deduplicateNodes(mergedNodes, incomingNodes);
+  const mergedEdges = deduplicateEdges([...currentEdges, ...incomingEdges]);
+
+  // Brick rows can be supported by more than one node in the previous layer.
+  // Keep every source node's childIds synchronized with the semantic edge set,
+  // rather than updating only the node that happened to be clicked.
+  const childrenBySource = new Map<string, string[]>();
+  for (const edge of mergedEdges) {
+    const list = childrenBySource.get(edge.source) ?? [];
+    if (!list.includes(edge.target)) list.push(edge.target);
+    childrenBySource.set(edge.source, list);
+  }
+
+  mergedNodes = mergedNodes.map((node) => {
+    const edgeChildren = childrenBySource.get(node.id);
+    if (!edgeChildren) return node;
+    return {
+      ...node,
+      childIds: [...new Set([...node.childIds, ...edgeChildren])],
+    };
+  });
+
   return {
-    nodes: deduplicateNodes(replaced, incomingNodes),
-    edges: deduplicateEdges([...currentEdges, ...incomingEdges]),
+    nodes: mergedNodes,
+    edges: mergedEdges,
   };
 }
 
@@ -58,8 +84,6 @@ export function hasGeneratedTraversalNeighbors(
  * Visibility is intent-aware. The graph retains every semantic relationship
  * that has already been generated, while the current Tree/Brick intent decides
  * which relationships drive the visible traversal.
- *
- * This is the key to "Separate the intent. Share the system": a prerequisite, decomposition, and question-analysis branch can coexist without being mixed on screen.
  */
 export function visibleGraph(
   nodes: ConceptNode[],
@@ -73,7 +97,9 @@ export function visibleGraph(
   if (!nodes.length) return { nodes: [], edges: [] };
 
   const relationships = traversalRelationships(options?.traversal);
-  const requestedRoots = (options?.rootNodeIds ?? []).filter((id) => nodes.some((node) => node.id === id));
+  const requestedRoots = (options?.rootNodeIds ?? []).filter((id) =>
+    nodes.some((node) => node.id === id),
+  );
   const roots = requestedRoots.length
     ? requestedRoots
     : nodes.filter((node) => !node.parentId).map((node) => node.id);
@@ -92,8 +118,6 @@ export function visibleGraph(
 
   const visibleEdges = edges.filter((edge) => {
     if (!visible.has(edge.source) || !visible.has(edge.target)) return false;
-    // Related links never expand the graph, but can be shown when both concepts
-    // are already visible through the active traversal.
     return relationships.has(edge.relationshipType) || edge.relationshipType === "related";
   });
 

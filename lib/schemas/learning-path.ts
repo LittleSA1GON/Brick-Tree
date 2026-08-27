@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { DifficultyAssessmentSchema, DifficultyLabelSchema, DifficultyScoreSchema, EvidenceReferenceSchema } from "./concept";
+import {
+  DifficultyAssessmentSchema,
+  DifficultyLabelSchema,
+  DifficultyScoreSchema,
+  EvidenceReferenceSchema,
+  LevelNarrativeSchema,
+} from "./concept";
 import {
   DepthPreferenceSchema,
   KnowledgeLevelSchema,
@@ -7,6 +13,114 @@ import {
   LearningPurposeSchema,
   SourceModeSchema,
 } from "./session";
+
+function textFromUnknown(value: unknown): unknown {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    const parts = value.map(textFromUnknown).filter((item): item is string => typeof item === "string" && Boolean(item.trim()));
+    return parts.join("; ");
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    for (const key of ["summary", "text", "description", "title", "value", "reason", "explanation", "name"]) {
+      if (record[key] !== undefined) {
+        const preferred = textFromUnknown(record[key]);
+        if (typeof preferred === "string" && preferred.trim()) return preferred;
+      }
+    }
+    const parts = Object.values(record)
+      .map(textFromUnknown)
+      .filter((item): item is string => typeof item === "string" && Boolean(item.trim()));
+    if (parts.length) return parts.join("; ");
+  }
+  return value;
+}
+
+function flexibleText(max: number, min = 1) {
+  return z.preprocess(textFromUnknown, z.string().trim().min(min).max(max));
+}
+
+function flexibleOptionalText(max: number) {
+  return z.preprocess(
+    (value) => value === undefined || value === null || value === "" ? undefined : textFromUnknown(value),
+    z.string().trim().max(max).optional(),
+  );
+}
+
+function flexibleTextArray(maxItems: number, maxLength: number) {
+  return z.preprocess((value) => {
+    if (value === undefined || value === null || value === "") return [];
+    const values = Array.isArray(value)
+      ? value
+      : typeof value === "string"
+        ? value.split(/[\n,;]+/)
+        : [value];
+    return values
+      .map(textFromUnknown)
+      .filter((item): item is string => typeof item === "string" && Boolean(item.trim()));
+  }, z.array(z.string().trim().min(1).max(maxLength)).max(maxItems).default([]));
+}
+
+function numberFromUnknown(value: unknown): unknown {
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : value;
+  }
+  return value;
+}
+
+function difficultyLabelFromUnknown(value: unknown): unknown {
+  const text = textFromUnknown(value);
+  if (typeof text !== "string") return value;
+  const normalized = text.trim().toLocaleLowerCase();
+  const labels: Record<string, string> = {
+    foundational: "Foundational",
+    beginner: "Beginner",
+    intermediate: "Intermediate",
+    advanced: "Advanced",
+    expert: "Expert",
+  };
+  return labels[normalized] ?? text;
+}
+
+function normalizeDifficultyAssessment(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  return {
+    ...record,
+    difficulty: numberFromUnknown(record.difficulty),
+    difficultyLabel: difficultyLabelFromUnknown(record.difficultyLabel),
+    difficultyExplanation: textFromUnknown(record.difficultyExplanation),
+    difficultyFactors: record.difficultyFactors,
+  };
+}
+
+function normalizeLevelNarrative(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  return {
+    ...record,
+    sameLevelReason: textFromUnknown(record.sameLevelReason),
+    previousLevelComparison: textFromUnknown(record.previousLevelComparison),
+  };
+}
+
+const FlexibleDifficultyScoreSchema = z.preprocess(numberFromUnknown, DifficultyScoreSchema);
+const FlexibleDifficultyLabelSchema = z.preprocess(difficultyLabelFromUnknown, DifficultyLabelSchema);
+const FlexibleDifficultyAssessmentSchema = z.preprocess(normalizeDifficultyAssessment, DifficultyAssessmentSchema);
+const FlexibleLevelNarrativeSchema = z.preprocess(normalizeLevelNarrative, LevelNarrativeSchema);
+
+function flexibleScore(min: number, max: number, fallback: number) {
+  return z.preprocess(numberFromUnknown, z.number().min(min).max(max).default(fallback));
+}
+
+function flexibleOptionalInteger(min: number, max: number) {
+  return z.preprocess(
+    (value) => value === undefined || value === null || value === "" ? undefined : numberFromUnknown(value),
+    z.number().int().min(min).max(max).optional(),
+  );
+}
 
 export const ExploreBiasSchema = z.enum([
   "balanced",
@@ -46,39 +160,43 @@ export type LearnerProfile = z.infer<typeof LearnerProfileSchema>;
  * nonessential metadata near the end of a response.
  */
 export const LearningDirectionProposalSchema = z.object({
-  title: z.string().min(1).max(120),
-  description: z.string().min(1).max(360),
-  whyReachable: z.string().min(1).max(600),
-  difficulty: DifficultyScoreSchema,
-  difficultyLabel: DifficultyLabelSchema,
-  difficultyExplanation: z.string().min(1).max(500),
-  difficultyFactors: z.array(z.string().min(1).max(120)).max(5).default([]),
-  satisfiedPrerequisites: z.array(z.string().min(1).max(140)).max(6).default([]),
-  missingPrerequisites: z.array(z.string().min(1).max(140)).max(6).default([]),
-  unlocks: z.array(z.string().min(1).max(160)).max(5).default([]),
-  applications: z.array(z.string().min(1).max(160)).max(5).default([]),
-  estimatedLearningTime: z.string().max(120).optional(),
-  readinessScore: z.number().min(0).max(100).default(60),
-  goalAlignmentScore: z.number().min(0).max(100).default(50),
-  prerequisiteGapScore: z.number().min(0).max(100).default(50),
-  utilityScore: z.number().min(0).max(100).default(50),
-  recommendationScore: z.number().min(0).max(100).default(50),
-  confidence: z.number().min(0).max(1).default(0.75),
+  title: flexibleText(120),
+  description: flexibleText(360),
+  whyReachable: flexibleText(600),
+  connectsFrom: flexibleTextArray(2, 140),
+  difficulty: FlexibleDifficultyScoreSchema,
+  difficultyLabel: FlexibleDifficultyLabelSchema,
+  difficultyExplanation: flexibleText(500),
+  difficultyFactors: flexibleTextArray(5, 120),
+  satisfiedPrerequisites: flexibleTextArray(6, 140),
+  missingPrerequisites: flexibleTextArray(6, 140),
+  unlocks: flexibleTextArray(5, 160),
+  applications: flexibleTextArray(5, 160),
+  estimatedLearningTime: flexibleOptionalText(120),
+  readinessScore: flexibleScore(0, 100, 60),
+  goalAlignmentScore: flexibleScore(0, 100, 50),
+  prerequisiteGapScore: flexibleScore(0, 100, 50),
+  utilityScore: flexibleScore(0, 100, 50),
+  recommendationScore: flexibleScore(0, 100, 50),
+  confidence: flexibleScore(0, 1, 0.75),
   evidence: z.array(EvidenceReferenceSchema).max(6).default([]),
 });
 
 export type LearningDirectionProposal = z.infer<typeof LearningDirectionProposalSchema>;
 
 export const LearningPathProposalSchema = z.object({
-  learnerSummary: z.string().min(1).max(700),
-  inferredAssumptions: z.array(z.string().min(1).max(180)).max(6).default([]),
-  foundationAssessment: DifficultyAssessmentSchema,
-  foundationSuggestions: z.array(z.string().min(1).max(120)).max(4).default([]),
-  directions: z.array(LearningDirectionProposalSchema).min(3).max(6),
-  recommendedTitle: z.string().min(1).max(120),
-  recommendationReason: z.string().min(1).max(700),
-  estimatedDestinationHeight: z.number().int().min(1).max(12).optional(),
-  destinationHeightReason: z.string().min(1).max(600).optional(),
-  confidence: z.number().min(0).max(1).default(0.75),
+  learnerSummary: flexibleText(700),
+  parsedFoundations: flexibleTextArray(8, 120),
+  inferredAssumptions: flexibleTextArray(6, 180),
+  foundationAssessment: FlexibleDifficultyAssessmentSchema,
+  foundationLevelNarrative: FlexibleLevelNarrativeSchema,
+  levelNarrative: FlexibleLevelNarrativeSchema,
+  foundationSuggestions: flexibleTextArray(4, 120),
+  directions: z.array(LearningDirectionProposalSchema).min(2).max(10),
+  recommendedTitle: flexibleText(120),
+  recommendationReason: flexibleText(700),
+  estimatedDestinationHeight: flexibleOptionalInteger(1, 12),
+  destinationHeightReason: flexibleOptionalText(600),
+  confidence: flexibleScore(0, 1, 0.75),
 });
 export type LearningPathProposal = z.infer<typeof LearningPathProposalSchema>;

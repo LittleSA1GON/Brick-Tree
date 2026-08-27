@@ -7,6 +7,15 @@ Brick Tree is a stateless learning map with two separate directions:
 - **Tree** cuts a concept into branches, traces prerequisites, or examines a broad question.
 - **Brick** starts from known foundations and constructs reachable knowledge upward, either by exploring or building toward a destination.
 
+## 0.8.3 reliability updates
+
+- All native dropdowns use one explicit dark palette so selected values and option menus remain readable.
+- Brick accepts free-form foundation prose, sends the raw statement to the Learning Path Agent, and keeps a deterministic schema-safe fallback parser. Negated knowledge is not marked as known, and starting-from-scratch statements are supported.
+- Learning Path output normalizes harmless model shape variations such as an object returned where a text field was expected, preventing Groq formatting differences from aborting an otherwise usable path.
+- Brick initial generation stays compact like Tree; richer prerequisites and unlocks are loaded lazily when node detail is opened.
+- Node detail now requests and displays adaptive prerequisites and concrete next-step unlocks instead of static placeholder copy.
+- Explanation requests can refresh when the requested learner level changes, and failed automatic resource lookups can be retried.
+
 ## Interaction model
 
 Tree and Brick maps are independent workspaces. You can create several of each and switch between them from the map drawer without changing another map.
@@ -61,9 +70,33 @@ Tree and Brick maps are independent workspaces. You can create several of each a
 
 Nodes stay compact until focused. Compact nodes show the concept name and brief description. A focused node expands to include explanation, prerequisites, why it matters, resources, and the control to branch or construct the next layer.
 
-There is no draggable graph canvas and no scroll-based graph navigation. Navigation is click-to-focus. The left Depth/Height rail is clickable and explains what each signed level means.
+The main learning graph is not a free-drag canvas: navigation is click-to-focus plus two-dimensional scroll/swipe. The left Depth/Height rail is clickable and explains what each signed level means.
 
-The map drawer renders the current workspace as a connected mini hierarchy and can teleport directly to a node.
+The small persistent Tree/Brick map can be repositioned with its dedicated drag handle without interfering with node clicks. The map drawer renders the current workspace as a connected mini hierarchy and can teleport directly to a node.
+
+## Multi-agent collaboration
+
+Brick Tree uses four explicit collaborating roles:
+
+```text
+Concept Architect ──→ Pedagogy Validator
+       │                    │
+       └────────────→ Resource Agent
+
+Learning Path Agent ─→ Pedagogy Validator
+       │                    │
+       └────────────→ Resource Agent
+
+Pedagogy Validator ──→ originating generation agent when revision is required
+```
+
+Every handoff is a structured runtime message with an ID, source agent, destination agent, summary, timestamp, and context. The runtime rejects handoffs to unknown agents or destinations that are not on the source agent's allowlist. Validation handoffs include candidate titles, expected level, learner context, and revision issues. Resource handoffs include the exact node, difficulty, level, and learner profile.
+
+## Source-neutral resource agent
+
+The Resource Agent does not use a preferred-domain whitelist or a curated catalog of favored websites. It creates node-specific queries, retrieves a mixed candidate pool, and then evaluates candidates using relevance, credibility evidence, learner/audience fit, node difficulty, and source diversity.
+
+Web retrieval can use Tavily and Brave Search. Scholarly retrieval can use Crossref, OpenAlex, and Semantic Scholar when configured. Wikipedia/Wikimedia are excluded. The model-based selector is only allowed to return candidate IDs from the retrieved pool, so it cannot invent URLs. If model selection is disabled, unavailable, or rate-limited, deterministic scoring applies the same relevance/credibility/fit/diversity principles.
 
 ## Rate-limit protection
 
@@ -136,17 +169,18 @@ openai-compatible
 ```env
 AGENT_MAX_STEPS=5
 AGENT_MAX_REVISIONS=1
-LLM_MAX_OUTPUT_TOKENS=1600
-LLM_PROVIDER_COOLDOWN_SECONDS=75
-LLM_MIN_PROVIDER_INTERVAL_MS=2500
-GROQ_MIN_PROVIDER_INTERVAL_MS=7000
-GEMINI_MIN_PROVIDER_INTERVAL_MS=2500
-CLOUDFLARE_MIN_PROVIDER_INTERVAL_MS=2000
-OPENROUTER_MIN_PROVIDER_INTERVAL_MS=5000
+LLM_MAX_OUTPUT_TOKENS=1000
+LLM_PROVIDER_COOLDOWN_SECONDS=90
+LLM_MIN_PROVIDER_INTERVAL_MS=5000
+GROQ_MIN_PROVIDER_INTERVAL_MS=10000
+GEMINI_MIN_PROVIDER_INTERVAL_MS=4000
+CLOUDFLARE_MIN_PROVIDER_INTERVAL_MS=3000
+OPENROUTER_MIN_PROVIDER_INTERVAL_MS=6000
 PEDAGOGY_VALIDATION_MODE=deterministic
+RESOURCE_PLANNING_MODE=deterministic
 ```
 
-Set `PEDAGOGY_VALIDATION_MODE=llm` only when you explicitly want every candidate layer to use the LLM validator. It consumes additional quota.
+Set `PEDAGOGY_VALIDATION_MODE=llm` only when you explicitly want every candidate layer to use the LLM validator. Set `RESOURCE_PLANNING_MODE=llm` to let the Resource Agent model choose among retrieved candidate IDs; deterministic source-neutral scoring remains the fallback. Both options consume additional model quota.
 
 ## Resource APIs
 

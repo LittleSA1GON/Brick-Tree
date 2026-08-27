@@ -47,3 +47,32 @@ a {
 ::selection {
   background: rgba(255, 255, 255, 0.18);
 }
+
+/* Native select menus need an explicit palette: otherwise some browsers open a
+   light system popup while inheriting Brick Tree's light text. */
+select {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 12px;
+  outline: none;
+  color-scheme: dark;
+  color: #f7f8f6;
+  background-color: #151817;
+  cursor: pointer;
+}
+
+select option,
+select optgroup {
+  color: #f7f8f6;
+  background-color: #151817;
+}
+
+select option:checked {
+  color: #ffffff;
+  background-color: #262b28;
+}
+
+select:focus-visible {
+  border-color: rgba(255, 255, 255, 0.34);
+}

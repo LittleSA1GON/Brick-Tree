@@ -19,7 +19,8 @@ const NavigateRequestSchema = z
     traversal: LearningTraversalSchema,
     topic: z.string().trim().min(2).max(300).optional(),
     node: ConceptNodeSchema.optional(),
-    knownConcepts: z.array(z.string().trim().min(1)).max(60).optional(),
+    knownConcepts: z.array(z.string().trim().min(1).max(160)).max(60).optional(),
+    rawKnowledgeInput: z.string().trim().max(12_000).optional(),
     goal: z.string().trim().max(700).optional(),
     learnerProfile: LearnerProfileSchema.optional(),
     graphContext: GraphContextSchema.optional(),
@@ -29,8 +30,8 @@ const NavigateRequestSchema = z
     if (value.traversal.mode === "tree" && !value.topic && !value.node) {
       ctx.addIssue({ code: "custom", message: "Tree navigation requires a topic or selected node.", path: ["topic"] });
     }
-    if (value.traversal.mode === "brick" && !value.node && !(value.knownConcepts?.length || value.learnerProfile?.existingKnowledge.length)) {
-      ctx.addIssue({ code: "custom", message: "Brick navigation requires existing knowledge or a selected node.", path: ["knownConcepts"] });
+    if (value.traversal.mode === "brick" && !value.node && !(value.rawKnowledgeInput?.trim() || value.knownConcepts?.length || value.learnerProfile?.existingKnowledge.length)) {
+      ctx.addIssue({ code: "custom", message: "Brick navigation requires a foundation statement, existing knowledge, or a selected node.", path: ["rawKnowledgeInput"] });
     }
     if (value.traversal.mode === "brick" && value.traversal.intent === "destination" && !(value.goal || value.learnerProfile?.goal || value.learnerProfile?.learningGoal)) {
       ctx.addIssue({ code: "custom", message: "Destination mode requires a learning goal.", path: ["goal"] });

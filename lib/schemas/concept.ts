@@ -32,6 +32,12 @@ export const GraphLevelDescriptorSchema = z.object({
 });
 export type GraphLevelDescriptor = z.infer<typeof GraphLevelDescriptorSchema>;
 
+export const LevelNarrativeSchema = z.object({
+  sameLevelReason: z.string().min(1).max(360),
+  previousLevelComparison: z.string().min(1).max(360),
+});
+export type LevelNarrative = z.infer<typeof LevelNarrativeSchema>;
+
 export const ResourceTypeSchema = z.enum([
   "article",
   "video",
@@ -172,6 +178,7 @@ export const ConceptDecompositionSchema = z.object({
   parentConcept: z.string().min(1).max(300),
   summary: z.string().min(1).max(650),
   parentAssessment: DifficultyAssessmentSchema,
+  levelNarrative: LevelNarrativeSchema,
   children: z.array(ConceptChildProposalSchema).min(3).max(6),
   confidence: z.number().min(0).max(1).default(0.75),
 });
