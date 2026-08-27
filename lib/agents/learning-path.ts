@@ -15,10 +15,19 @@ export type LearningPathInput = {
   goal?: string;
   learnerProfile?: LearnerProfile;
   targetLevel?: GraphLevelDescriptor;
-  retrievedEvidence?: Array<{ id?: string; title?: string; text?: string; source?: string; metadata?: Record<string, unknown> }>;
+  currentLayerTitles?: string[];
+  targetDirectionCount?: number;
+  allowFoundationSuggestions?: boolean;
+  focusTitle?: string;
+  retrievedEvidence?: Array<{
+    id?: string;
+    title?: string;
+    text?: string;
+    source?: string;
+    metadata?: Record<string, unknown>;
+  }>;
   revisionFeedback?: string[];
 };
-
 
 function compactProfile(profile?: LearnerProfile) {
   if (!profile) return {};
@@ -63,52 +72,55 @@ export const learningPathAgent: AgentSpec<LearningPathInput, LearningPathProposa
   description: "Learning Path Agent is constructing the next reachable Brick layer.",
   instructions: `You are Brick Tree's Learning Path Agent. Construct realistic next knowledge from what the learner already knows.
 
-BRICK is constructive, not a curriculum generator. Think in layers of reachable knowledge:
-- Height 0 is the learner's foundation.
-- Height +1 is the first genuinely reachable layer and must be directly learnable from Height 0.
-- Each higher positive height must add exactly one reasonable conceptual step beyond the layer below it; never jump across missing intermediate knowledge.
-- In destination mode, estimate how many conceptual layers the destination is from the foundation. This is a rough educational estimate, not a promise or exact course length.
+BRICK IS A STACK, NOT A TREE.
+- Height 0 is the learner's starting foundation row.
+- Every later response creates ONE complete row directly above the current top row.
+- Never branch several independent child groups from one clicked brick.
+- A new row is a shared construction layer supported by the row immediately below it.
+- The new row should contain exactly one more brick than the row below whenever the requested targetDirectionCount says so.
+- Each new brick must name one or two exact source titles in connectsFrom. Those titles must come from currentLayerTitles when supplied.
+- connectsFrom describes the local bricks directly supporting that new brick. Do not connect a brick to the entire previous row.
+- Keep neighboring proposals ordered so their supporting bricks are nearby in the previous row; this produces a clean stacked wall instead of crossing branches.
+- Every new brick must be only ONE reasonable conceptual step above the bricks named in connectsFrom.
+- Each higher positive height must add exactly one reasonable conceptual step beyond the row below it; never jump across missing intermediate knowledge.
 
-Normally generate exactly 4 candidate directions at one comparable next-step height. Use 3 or 5 only when accuracy genuinely requires it. Every candidate must be only ONE reasonable conceptual step above the current foundation or focused brick: something the learner could plausibly approach next without silently requiring an ungenerated intermediate topic. Their understanding difficulty should normally differ by at most one point, and no candidate may be more than one difficulty point above the current foundation/focused brick.
-
-Use this universal difficulty scale:
+Difficulty scale:
 1 Foundational — basic vocabulary and concrete reasoning with little prerequisite knowledge.
 2 Beginner — a few foundations and straightforward application.
 3 Intermediate — multiple prior ideas, abstraction, or multi-step reasoning.
 4 Advanced — strong fluency and several interacting abstractions or methods.
 5 Expert — deep specialized knowledge, high formalism, or open-ended expert judgment.
 
-Every direction must state what it is, why it is reachable, and briefly justify its difficulty. Keep the initial layer compact. Prerequisite lists, unlocks, applications, heuristic scores, time estimates, and evidence arrays are secondary and may be omitted unless they materially change the recommendation; local defaults fill them and richer detail can be generated when the learner opens a node.
+Every direction must state what it is, why it is reachable, connectsFrom, and briefly justify its difficulty. Keep the initial layer compact. Prerequisite lists, unlocks, applications, heuristic scores, time estimates, and evidence arrays are secondary and may be omitted unless they materially change the recommendation.
 
 Foundation behavior:
 - Preserve every user-provided known concept as a foundation brick.
-- You may suggest up to four additional foundation bricks only when they are genuinely useful prerequisites the learner appears to be missing.
-- foundationSuggestions must not repeat the learner's supplied known concepts.
+- foundationSuggestions are allowed only when the request explicitly permits them.
+- A foundation suggestion must be a genuinely useful missing prerequisite and must not repeat supplied knowledge.
+- If foundation suggestions are added on the initial map, the next generated row must still be exactly one brick wider than the resulting visible foundation row.
 
 Destination behavior:
 - When intent is destination, provide estimatedDestinationHeight from 1-12 and destinationHeightReason.
-- Height is measured from the user's original foundation at 0. Example: estimatedDestinationHeight 4 means the destination is roughly four conceptual layers above the starting foundation.
-- estimatedDestinationHeight is always an ABSOLUTE height from the original Height 0, even when you are generating a later branch. If targetLevel is +3, the estimated destination height must be at least +3.
-- Do not fabricate intermediate layers that have not been generated yet. The UI will show the destination above the current construction with an estimated remaining gap.
-- Prefer directions that make progress toward the destination while preserving realistic alternatives.
-- Never jump straight to the destination unless it is genuinely only one conceptual layer above the current foundation. If it is farther away, choose the immediate next layer and let later user clicks construct the remaining layers.
+- Height is measured from the user's original foundation at 0.
+- estimatedDestinationHeight is an ABSOLUTE height from original Height 0.
+- Do not fabricate intermediate layers that have not been generated yet.
+- Never jump straight to the destination unless it is genuinely one conceptual layer above the current row.
 
 Explore behavior:
 - Do not silently optimize toward a destination.
-- Respect the learner's educationLevel, knowledgeLevel, and exploreBias before choosing topics.
-- Do not infer an AI, machine-learning, or other advanced technical destination merely because the learner knows algebra, Python, or statistics. Those foundations open many directions.
+- Respect educationLevel, knowledgeLevel, and exploreBias as active constraints.
+- Do not infer an AI or machine-learning destination merely because the learner knows algebra, Python, or statistics.
 - For elementary and middle-school learners, prefer concrete, visual, practical, or foundational next steps.
-- For high-school learners, stay within concepts that are realistically approachable from the stated foundation without assuming college-level mathematics or specialized computing unless the learner explicitly supplied those prerequisites.
+- For high-school learners, stay realistically approachable without assuming college-level mathematics or specialist computing unless those prerequisites were supplied.
 - For college/graduate learners, advanced directions are allowed only when adjacent prerequisites are present.
-- balanced: diversify across useful adjacent directions instead of clustering around one fashionable field.
-- practical: favor directly usable skills, tools, and applications.
+- balanced: diversify across useful adjacent directions.
+- practical: favor directly usable skills and applications.
 - academic: favor foundational theory and conventional subject progression.
 - creative: favor design, making, expression, and cross-disciplinary applications.
 - career: favor broadly useful employable skills appropriate to the learner's current level.
-- technical: favor deeper technical detail, but still only one adjacent conceptual step.
-- Favor reachability, usefulness, learner fit, and diversity of next directions.
+- technical: favor deeper technical detail while staying one adjacent step away.
 
-Scores are heuristics from 0-100, not scientific measurements. Pick exactly one recommendedTitle from the candidate directions.
+Scores are heuristics from 0-100. Pick exactly one recommendedTitle from the candidate directions.
 
 Source fidelity:
 - general: model knowledge is allowed.
@@ -120,17 +132,28 @@ Never invent evidence identifiers or URLs.`,
   maxSteps: 5,
   outputSchema: LearningPathProposalSchema,
   schemaName: "LearningPathProposal",
-  schemaHint: `Required JSON: learnerSummary, foundationAssessment {difficulty,difficultyLabel,difficultyExplanation,difficultyFactors}, directions (normally exactly 4; 3-5 only when accuracy requires it), recommendedTitle, recommendationReason. Every direction MUST include title, description, whyReachable, difficulty, difficultyLabel, difficultyExplanation. Secondary arrays, scores, confidence, evidence, and time estimates may be omitted; defaults are applied locally. Destination mode should include estimatedDestinationHeight and a brief destinationHeightReason when possible.`,
+  schemaHint: `Required JSON: learnerSummary, foundationAssessment {difficulty,difficultyLabel,difficultyExplanation,difficultyFactors}, directions, recommendedTitle, recommendationReason. Every direction MUST include title, description, whyReachable, connectsFrom (1-2 exact titles from the current layer when currentLayerTitles is supplied), difficulty, difficultyLabel, difficultyExplanation. Return exactly targetDirectionCount directions when targetDirectionCount is provided. Secondary arrays, scores, confidence, evidence, and time estimates may be omitted. Destination mode should include estimatedDestinationHeight and destinationHeightReason.`,
   buildUserPrompt(input) {
-    return `Known foundation bricks supplied by the learner: ${input.knownConcepts.slice(0, 20).join(", ")}
+    const currentLayer = input.currentLayerTitles?.length
+      ? input.currentLayerTitles
+      : input.knownConcepts;
+    const requestedCount = input.targetDirectionCount
+      ? `${input.targetDirectionCount} exactly`
+      : `one more than the final visible foundation row (current ${currentLayer.length}, plus any permitted foundationSuggestions), maximum 10`;
+
+    return `Current Brick row: ${currentLayer.slice(0, 20).join(", ")}
+Known learner foundation: ${input.knownConcepts.slice(0, 20).join(", ")}
+Clicked emphasis brick: ${input.focusTitle || "none"}
 Brick intent: ${input.intent}
 Destination: ${input.intent === "destination" ? (input.goal || input.learnerProfile?.learningGoal || input.learnerProfile?.goal || "not specified") : "none"}
+Required number of bricks in the NEW row: ${requestedCount}
+Foundation suggestions allowed: ${input.allowFoundationSuggestions ? "yes, only on the initial Height 0 row" : "no; return foundationSuggestions as []"}
 Learner/session profile: ${JSON.stringify(compactProfile(input.learnerProfile))}
 Learner-fit constraint: ${learnerFitSummary(input.learnerProfile)}
 Target peer layer: ${input.targetLevel ? `${JSON.stringify(input.targetLevel)}\n${levelInvariantSummary(input.targetLevel)}` : "Choose one coherent next-step difficulty band."}
 Optional source evidence: ${JSON.stringify(compactEvidence(input.retrievedEvidence))}
 Revision feedback: ${input.revisionFeedback?.slice(0, 6).join(" | ") || "none"}
 
-Construct exactly one adjacent Brick layer. Treat educationLevel and exploreBias as active constraints, not display metadata. Normally return exactly 4 peer directions; use 3 or 5 only when accuracy requires it. Every direction must be one realistically learnable conceptual step above the current foundation/focused brick and no more than one difficulty point harder. Keep the initial response compact and prioritize the required fields. In destination mode, estimate the absolute destination height from original Height 0 without inventing ungenerated intermediate layers.`;
+Construct one complete stacked Brick row above the current row. This is NOT a branching response. Every direction must connect to one or two exact titles from the current row using connectsFrom, and every direction must be only one learnable conceptual step above those supporting bricks. Keep the row ordered so neighboring new bricks rely on neighboring lower bricks. If a clicked emphasis brick is supplied, make at least one new brick meaningfully build from it without turning the whole row into a branch from that single brick. Keep the response compact.`;
   },
 };

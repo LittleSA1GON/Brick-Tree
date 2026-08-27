@@ -129,9 +129,13 @@ function rootNode(
   description: string,
   assessment: DifficultyAssessment,
   knowledgeStatus: ConceptNode["knowledgeStatus"] = "available",
+  levelNarrative?: { description: string; peerRule: string },
 ): ConceptNode {
   const normalized = normalizedAssessment(assessment);
-  const level = levelFromDifficulties(axis, 0, [normalized.difficulty]);
+  const baseLevel = levelFromDifficulties(axis, 0, [normalized.difficulty]);
+  const level: GraphLevelDescriptor = levelNarrative
+    ? { ...baseLevel, description: levelNarrative.description.slice(0, 420), peerRule: levelNarrative.peerRule.slice(0, 420) }
+    : baseLevel;
   return {
     id: conceptId(undefined, title),
     title,
@@ -156,6 +160,197 @@ function rootNode(
     resources: [],
     origins: [{ type: "model-knowledge" }],
   };
+}
+
+
+const BRICK_MAX_ROW_SIZE = 10;
+
+function truncateLevelText(value: string): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, 420);
+}
+
+function narrateLevel(
+  level: GraphLevelDescriptor,
+  description: string,
+  peerRule: string,
+): GraphLevelDescriptor {
+  return {
+    ...level,
+    description: truncateLevelText(description),
+    peerRule: truncateLevelText(peerRule),
+  };
+}
+
+function treeLevelDescription(
+  parent: ConceptNode,
+  decomposition: ConceptDecomposition,
+  intent: TreeIntent,
+  index: number,
+): { description: string; peerRule: string } {
+  const childTitles = decomposition.children.slice(0, 5).map((child) => child.title).join(", ");
+  const signed = `Depth -${index}`;
+  if (intent === "trace-prerequisites") {
+    return {
+      description: `${signed} in this Tree traces one prerequisite layer beneath ${parent.title}. This cut identifies ${childTitles} as the immediate knowledge that supports the focused concept.`,
+      peerRule: `Every node at ${signed} must be one directly understandable prerequisite step below its parent in this specific Tree; do not skip an intermediate foundation.`,
+    };
+  }
+  if (intent === "analyze-question") {
+    return {
+      description: `${signed} in this Tree opens ${parent.title} through the next concrete reasoning lenses: ${childTitles}.`,
+      peerRule: `Every node at ${signed} must examine one direct aspect of its parent question at comparable reasoning depth without repeating generic labels.`,
+    };
+  }
+  return {
+    description: `${signed} in this Tree cuts ${parent.title} into its next directly understandable branches: ${childTitles}.`,
+    peerRule: `Every node at ${signed} must be one direct component of its parent and only one conceptual cut simpler, so the learner never skips a layer.`,
+  };
+}
+
+function brickFoundationTitles(
+  knownConcepts: string[],
+  proposal: LearningPathProposal,
+): string[] {
+  const supplied = [...new Set(knownConcepts.map((value) => value.trim()).filter(Boolean))];
+  const suppliedKeys = new Set(supplied.map(normalizeConceptTitle));
+  const roomForSuggestions = Math.max(0, BRICK_MAX_ROW_SIZE - 1 - supplied.length);
+  const suggestions = proposal.foundationSuggestions
+    .map((value) => value.trim())
+    .filter((value) => value && !suppliedKeys.has(normalizeConceptTitle(value)))
+    .slice(0, roomForSuggestions);
+  return [...supplied, ...suggestions];
+}
+
+function desiredBrickRowSize(lowerRowCount: number): number {
+  return Math.max(2, Math.min(BRICK_MAX_ROW_SIZE, lowerRowCount + 1));
+}
+
+function brickLevelDescription(
+  levelIndex: number,
+  lowerTitles: string[],
+  upperTitles: string[],
+  intent: BrickIntent,
+  goal?: string,
+): { description: string; peerRule: string } {
+  const lower = lowerTitles.slice(0, 6).join(", ");
+  const upper = upperTitles.slice(0, 6).join(", ");
+  const destination = intent === "destination" && goal
+    ? ` while moving one layer closer to ${goal}`
+    : "";
+  return {
+    description: `Height +${levelIndex} in this Brick workspace stacks one complete row above ${lower}. The new row adds ${upper}${destination}.`,
+    peerRule: `This row is one construction layer above Height +${Math.max(0, levelIndex - 1)}. Each new brick must connect only to one or two nearby supporting bricks from the row below and remain one reasonable learning step harder.`,
+  };
+}
+
+function addBrickStackShapeChecks(
+  validation: PedagogyValidation,
+  lowerRowCount: number,
+  upperRowCount: number,
+): PedagogyValidation {
+  const expected = desiredBrickRowSize(lowerRowCount);
+  if (upperRowCount === expected) return validation;
+  const message = `Brick layers must stack instead of branch: a row with ${lowerRowCount} brick${lowerRowCount === 1 ? "" : "s"} should produce ${expected} bricks in the next row, but ${upperRowCount} were returned.`;
+  return {
+    ...validation,
+    valid: false,
+    recommendedRevision: true,
+    coverageAssessment: `${validation.coverageAssessment} Stack-shape check: ${message}`,
+    issues: [
+      ...validation.issues,
+      { type: "coverage_gap" as const, message },
+    ].slice(0, 12),
+  };
+}
+
+type BrickLayerNode = Pick<ConceptNode, "id" | "title" | "normalizedTitle" | "difficulty">;
+
+function addBrickNoveltyChecks(
+  validation: PedagogyValidation,
+  directionTitles: string[],
+  existingTitles: string[],
+): PedagogyValidation {
+  const existing = new Set(existingTitles.map(normalizeConceptTitle));
+  const repeats = directionTitles.filter((title) => existing.has(normalizeConceptTitle(title)));
+  if (!repeats.length) return validation;
+  const message = `A new Brick row must add new knowledge instead of repeating bricks already in the stack: ${[...new Set(repeats)].join(", ")}.`;
+  return {
+    ...validation,
+    valid: false,
+    recommendedRevision: true,
+    coverageAssessment: `${validation.coverageAssessment} Novelty check: ${message}`,
+    issues: [
+      ...validation.issues,
+      { type: "duplicate" as const, message, affectedTitles: [...new Set(repeats)] },
+    ].slice(0, 12),
+  };
+}
+
+function orderDirectionsForBrickStack(
+  directions: LearningPathProposal["directions"],
+  lowerNodes: BrickLayerNode[],
+): LearningPathProposal["directions"] {
+  const lowerIndex = new Map(lowerNodes.map((node, index) => [node.normalizedTitle, index]));
+  return directions
+    .map((direction, originalIndex) => {
+      const anchors = (direction.connectsFrom ?? [])
+        .map((title) => lowerIndex.get(normalizeConceptTitle(title)))
+        .filter((value): value is number => value !== undefined);
+      const anchor = anchors.length
+        ? anchors.reduce((sum, value) => sum + value, 0) / anchors.length
+        : originalIndex * Math.max(1, lowerNodes.length - 1) / Math.max(1, directions.length - 1);
+      return { direction, originalIndex, anchor };
+    })
+    .sort((a, b) => a.anchor - b.anchor || a.originalIndex - b.originalIndex)
+    .map((item) => item.direction);
+}
+
+function brickSupportNodes(
+  lowerNodes: BrickLayerNode[],
+  upperIndex: number,
+  upperCount: number,
+  connectsFrom: string[],
+): BrickLayerNode[] {
+  if (!lowerNodes.length) return [];
+  if (lowerNodes.length === 1) return [lowerNodes[0]];
+
+  const position = upperCount <= 1
+    ? 0
+    : upperIndex * (lowerNodes.length - 1) / (upperCount - 1);
+  const leftIndex = Math.max(0, Math.min(lowerNodes.length - 1, Math.floor(position)));
+  const rightIndex = Math.max(0, Math.min(lowerNodes.length - 1, Math.ceil(position)));
+  const local = [...new Set([leftIndex, rightIndex])].map((index) => lowerNodes[index]);
+  const requested = new Set(connectsFrom.map(normalizeConceptTitle));
+  const matched = local.filter((node) => requested.has(node.normalizedTitle));
+  return matched.length ? matched : local;
+}
+
+function brickStackEdges(
+  lowerNodes: BrickLayerNode[],
+  upperNodes: ConceptNode[],
+  directions: LearningPathProposal["directions"],
+): ConceptEdge[] {
+  const edges: ConceptEdge[] = [];
+  upperNodes.forEach((node, index) => {
+    const direction = directions[index];
+    const supports = brickSupportNodes(
+      lowerNodes,
+      index,
+      upperNodes.length,
+      direction?.connectsFrom ?? [],
+    );
+    for (const source of supports) {
+      edges.push({
+        id: edgeId(source.id, node.id, "leads-to"),
+        source: source.id,
+        target: node.id,
+        relationshipType: "leads-to",
+        label: "supports",
+        confidence: direction?.confidence,
+      });
+    }
+  });
+  return edges;
 }
 
 function childrenFromDecomposition(
@@ -577,11 +772,17 @@ export async function navigateTree(input: {
         finalDecomposition.summary,
         finalDecomposition.parentAssessment,
         parentKnown ? "known" : "available",
+        {
+          description: `Depth 0 is ${input.topic}, the starting concept for this Tree before any cuts are made.`,
+          peerRule: `Depth 0 belongs only to this Tree workspace and anchors every later negative depth to ${input.topic}.`,
+        },
       );
     }
 
     const candidateScores = finalDecomposition.children.map((child) => child.difficulty);
-    finalLevel = targetLevel ?? levelFromDifficulties("depth", childIndex, candidateScores);
+    const baseLevel = targetLevel ?? levelFromDifficulties("depth", childIndex, candidateScores);
+    const levelStory = treeLevelDescription(parent, finalDecomposition, input.intent, childIndex);
+    finalLevel = narrateLevel(baseLevel, levelStory.description, levelStory.peerRule);
 
     let validationBase = deterministicValidationBaseline("Tree branch");
     if (getEnv().PEDAGOGY_VALIDATION_MODE === "llm") {
@@ -724,13 +925,11 @@ function foundationNodesFromLearningPath(
   knownConcepts: string[],
   proposal: LearningPathProposal,
 ): ConceptNode[] {
-  const supplied = [...new Set(knownConcepts.map((value) => value.trim()).filter(Boolean))];
-  const suppliedKeys = new Set(supplied.map(normalizeConceptTitle));
-  const suggestions = proposal.foundationSuggestions
-    .map((value) => value.trim())
-    .filter((value) => value && !suppliedKeys.has(normalizeConceptTitle(value)));
-  const titles = [...supplied, ...suggestions];
-  const level = levelFromDifficulties("height", 0, [proposal.foundationAssessment.difficulty]);
+  const titles = brickFoundationTitles(knownConcepts, proposal);
+  const suppliedKeys = new Set(
+    knownConcepts.map((value) => normalizeConceptTitle(value.trim())).filter(Boolean),
+  );
+  const level = root.level;
 
   return titles.map((title) => {
     const isSupplied = suppliedKeys.has(normalizeConceptTitle(title));
@@ -774,18 +973,25 @@ function candidateNodesFromLearningPath(
   validated: boolean,
   retrievedEvidence: RetrievedChunk[] = [],
 ): { nodes: ConceptNode[]; edges: ConceptEdge[] } {
-  const directions = proposal.directions.map((direction) => {
+  const orderedDirections = orderDirectionsForBrickStack(proposal.directions, foundations);
+  const directions = orderedDirections.map((direction, index) => {
     const id = conceptId(root.id, direction.title);
     const knowledgeStatus: ConceptNode["knowledgeStatus"] = direction.title === proposal.recommendedTitle
       ? "recommended"
       : direction.missingPrerequisites.length === 0 || direction.readinessScore >= 70
         ? "available"
         : "future";
+    const supports = brickSupportNodes(
+      foundations,
+      index,
+      orderedDirections.length,
+      direction.connectsFrom ?? [],
+    );
     return {
       id,
       title: direction.title,
       normalizedTitle: normalizeConceptTitle(direction.title),
-      parentId: root.id,
+      parentId: supports[0]?.id ?? root.id,
       childIds: [],
       depth: 1,
       level,
@@ -809,29 +1015,13 @@ function candidateNodesFromLearningPath(
     } satisfies ConceptNode;
   });
 
-  const edges: ConceptEdge[] = [];
-  for (const direction of directions) {
-    const proposalDirection = proposal.directions.find((item) => normalizeConceptTitle(item.title) === direction.normalizedTitle);
-    const prerequisiteKeys = new Set(
-      [...(proposalDirection?.satisfiedPrerequisites ?? []), ...(proposalDirection?.missingPrerequisites ?? [])]
-        .map(normalizeConceptTitle),
-    );
-    let sources = foundations.filter((foundation) => prerequisiteKeys.has(foundation.normalizedTitle));
-    if (!sources.length) sources = foundations.filter((foundation) => foundation.knowledgeStatus === "known");
-    if (!sources.length) sources = foundations;
+  const edges = brickStackEdges(foundations, directions, orderedDirections);
+  const foundationsWithChildren = foundations.map((foundation) => ({
+    ...foundation,
+    childIds: [...new Set(edges.filter((edge) => edge.source === foundation.id).map((edge) => edge.target))],
+  }));
 
-    for (const source of sources) {
-      edges.push({
-        id: edgeId(source.id, direction.id, "leads-to"),
-        source: source.id,
-        target: direction.id,
-        relationshipType: "leads-to",
-        confidence: direction.confidence,
-      });
-    }
-  }
-
-  return { nodes: [...foundations, ...directions], edges };
+  return { nodes: [...foundationsWithChildren, ...directions], edges };
 }
 
 export async function discoverLearningPath(input: {
@@ -871,9 +1061,11 @@ export async function discoverLearningPath(input: {
       "learning_path",
       {
         knownConcepts: input.knownConcepts,
+        currentLayerTitles: input.knownConcepts,
         intent,
         goal: input.goal,
         learnerProfile: input.learnerProfile,
+        allowFoundationSuggestions: true,
         retrievedEvidence,
         revisionFeedback,
       },
@@ -881,7 +1073,16 @@ export async function discoverLearningPath(input: {
     );
     finalProposal = path.data;
     const scores = finalProposal.directions.map((direction) => direction.difficulty);
-    finalLevel = levelFromDifficulties("height", 1, scores);
+    const foundationTitles = brickFoundationTitles(input.knownConcepts, finalProposal);
+    const baseLevel = levelFromDifficulties("height", 1, scores);
+    const levelStory = brickLevelDescription(
+      1,
+      foundationTitles,
+      finalProposal.directions.map((direction) => direction.title),
+      intent,
+      input.goal,
+    );
+    finalLevel = narrateLevel(baseLevel, levelStory.description, levelStory.peerRule);
 
     let validationBase = deterministicValidationBaseline("Brick layer");
     if (getEnv().PEDAGOGY_VALIDATION_MODE === "llm") {
@@ -906,24 +1107,32 @@ export async function discoverLearningPath(input: {
       validationBase = validator.data;
     }
     finalValidation = addDestinationHeightChecks(
-      addLearnerFitChecks(
-        addAdjacentStepChecks(
-          addDeterministicTitleChecks(
-            addDeterministicSourceChecks(
-              addDeterministicDifficultyChecks(validationBase, scores, finalLevel),
-              finalProposal.directions.map((direction) => ({ title: direction.title, evidence: direction.evidence ?? [] })),
-              retrievedEvidence,
-              sourceMode(input.learnerProfile),
+      addBrickStackShapeChecks(
+        addBrickNoveltyChecks(
+          addLearnerFitChecks(
+            addAdjacentStepChecks(
+              addDeterministicTitleChecks(
+                addDeterministicSourceChecks(
+                  addDeterministicDifficultyChecks(validationBase, scores, finalLevel),
+                  finalProposal.directions.map((direction) => ({ title: direction.title, evidence: direction.evidence ?? [] })),
+                  retrievedEvidence,
+                  sourceMode(input.learnerProfile),
+                ),
+                finalProposal.directions.map((direction) => direction.title),
+              ),
+              finalProposal.foundationAssessment.difficulty,
+              scores,
+              "brick",
             ),
-            finalProposal.directions.map((direction) => direction.title),
+            finalProposal,
+            input.learnerProfile,
+            intent,
           ),
-          finalProposal.foundationAssessment.difficulty,
-          scores,
-          "brick",
+          finalProposal.directions.map((direction) => direction.title),
+          foundationTitles,
         ),
-        finalProposal,
-        input.learnerProfile,
-        intent,
+        foundationTitles.length,
+        finalProposal.directions.length,
       ),
       finalProposal,
       intent,
@@ -954,12 +1163,17 @@ export async function discoverLearningPath(input: {
 
   if (!finalProposal || !finalValidation || !finalLevel) throw new Error("Learning path workflow did not complete.");
 
+  const finalFoundationTitles = brickFoundationTitles(input.knownConcepts, finalProposal);
   const root = rootNode(
     "Your Foundations",
     "height",
-    `Starting knowledge: ${input.knownConcepts.join(", ")}.`,
+    `Starting knowledge: ${finalFoundationTitles.join(", ")}.`,
     finalProposal.foundationAssessment,
     "known",
+    {
+      description: `Height 0 is this Brick workspace's starting foundation: ${finalFoundationTitles.slice(0, 8).join(", ")}.`,
+      peerRule: "Height 0 belongs only to this Brick workspace. Every later positive height must be built directly from the row immediately below it.",
+    },
   );
   const validated = finalValidation.valid && finalValidation.difficultyConsistency && finalValidation.sourceFidelity;
   if (!validated) warnings.push("The recommendation set is marked needs review because validation did not fully pass.");
@@ -998,58 +1212,95 @@ export async function branchFromConcept(input: {
   const intent = input.intent ?? (input.goal ? "destination" : "explore");
   const trace = new TraceCollector();
   const warnings: string[] = [];
-  const targetLevel =
-    existingLevel(input.graphContext, "height", input.node.depth + 1) ??
-    suggestedNextLevel("height", input.node.depth + 1, input.node.difficulty);
-  const knownConcepts = [
-    ...(input.learnerProfile?.existingKnowledge ?? []),
-    input.node.title,
-  ].filter((value, index, values) => values.indexOf(value) === index);
+
+  const currentHeight = input.graphContext.nodes.reduce(
+    (value, node) => Math.max(value, node.depth),
+    input.node.depth,
+  );
+  const currentLayer = input.graphContext.nodes
+    .filter((node) => node.depth === currentHeight)
+    .sort((a, b) => input.graphContext.nodes.indexOf(a) - input.graphContext.nodes.indexOf(b));
+  const lowerLayer: BrickLayerNode[] = currentLayer.length
+    ? currentLayer
+    : [input.node];
+  const nextHeight = currentHeight + 1;
+  const representativeDifficulty = Math.max(
+    1,
+    Math.min(
+      5,
+      Math.round(
+        lowerLayer.reduce((sum, node) => sum + node.difficulty, 0) /
+          Math.max(1, lowerLayer.length),
+      ),
+    ),
+  ) as ConceptNode["difficulty"];
+  const baseTargetLevel =
+    existingLevel(input.graphContext, "height", nextHeight) ??
+    suggestedNextLevel("height", nextHeight, representativeDifficulty);
+  const knownConcepts = lowerLayer.map((node) => node.title);
+  const targetDirectionCount = desiredBrickRowSize(lowerLayer.length);
+
   const retrievedEvidence = await sourceEvidence({
     agentName: "learning_path",
-    query: `${input.node.title} ${input.goal ?? ""} next concepts builds on unlocks`,
+    query: `${knownConcepts.join(" ")} ${input.goal ?? ""} next stacked concepts builds on unlocks`,
     trace,
     profile: input.learnerProfile,
     documents: input.documents,
   });
   if (sourceMode(input.learnerProfile) === "uploaded-only" && !retrievedEvidence.length) {
-    throw new Error(`No relevant uploaded-source evidence was found for building from ${input.node.title}.`);
+    throw new Error(`No relevant uploaded-source evidence was found for constructing above Height +${currentHeight}.`);
   }
 
   let revisionFeedback: string[] = [];
   let finalProposal: LearningPathProposal | undefined;
   let finalValidation: PedagogyValidation | undefined;
+  let finalLevel: GraphLevelDescriptor | undefined;
 
   for (let revision = 0; revision <= getEnv().AGENT_MAX_REVISIONS; revision += 1) {
     const path = await runtime.run<any, LearningPathProposal>(
       "learning_path",
       {
         knownConcepts,
+        currentLayerTitles: knownConcepts,
+        targetDirectionCount,
+        allowFoundationSuggestions: false,
+        focusTitle: input.node.title,
         intent,
         goal: input.goal,
         learnerProfile: input.learnerProfile,
-        targetLevel,
+        targetLevel: baseTargetLevel,
         retrievedEvidence,
         revisionFeedback,
       },
       trace,
     );
-    finalProposal = path.data;
+    finalProposal = {
+      ...path.data,
+      foundationSuggestions: [],
+    };
     const scores = finalProposal.directions.map((direction) => direction.difficulty);
+    const levelStory = brickLevelDescription(
+      nextHeight,
+      knownConcepts,
+      finalProposal.directions.map((direction) => direction.title),
+      intent,
+      input.goal,
+    );
+    finalLevel = narrateLevel(baseTargetLevel, levelStory.description, levelStory.peerRule);
 
-    let validationBase = deterministicValidationBaseline("Brick branch");
+    let validationBase = deterministicValidationBaseline("Brick stack layer");
     if (getEnv().PEDAGOGY_VALIDATION_MODE === "llm") {
       runtime.handoff(
         "learning_path",
         "pedagogy_validator",
         trace,
-        `Learning Path Agent handed a ${intent} branch layer to Pedagogy Validator.`,
+        `Learning Path Agent handed Height +${nextHeight} to Pedagogy Validator.`,
       );
       const validator = await runtime.run<any, PedagogyValidation>(
         "pedagogy_validator",
         {
           kind: "learning-path",
-          expectedLevel: targetLevel,
+          expectedLevel: finalLevel,
           candidate: finalProposal,
           learnerContext: { knownConcepts, goal: input.goal, profile: input.learnerProfile },
           sourceMode: sourceMode(input.learnerProfile),
@@ -1059,67 +1310,77 @@ export async function branchFromConcept(input: {
       );
       validationBase = validator.data;
     }
+
     finalValidation = addDestinationHeightChecks(
-      addLearnerFitChecks(
-        addAdjacentStepChecks(
-          addDeterministicTitleChecks(
-            addDeterministicSourceChecks(
-              addDeterministicDifficultyChecks(validationBase, scores, targetLevel),
-              finalProposal.directions.map((direction) => ({ title: direction.title, evidence: direction.evidence ?? [] })),
-              retrievedEvidence,
-              sourceMode(input.learnerProfile),
+      addBrickStackShapeChecks(
+        addBrickNoveltyChecks(
+          addLearnerFitChecks(
+            addAdjacentStepChecks(
+              addDeterministicTitleChecks(
+                addDeterministicSourceChecks(
+                  addDeterministicDifficultyChecks(validationBase, scores, finalLevel),
+                  finalProposal.directions.map((direction) => ({ title: direction.title, evidence: direction.evidence ?? [] })),
+                  retrievedEvidence,
+                  sourceMode(input.learnerProfile),
+                ),
+                finalProposal.directions.map((direction) => direction.title),
+              ),
+              representativeDifficulty,
+              scores,
+              "brick",
             ),
-            finalProposal.directions.map((direction) => direction.title),
-            input.node.title,
+            finalProposal,
+            input.learnerProfile,
+            intent,
           ),
-          input.node.difficulty,
-          scores,
-          "brick",
+          finalProposal.directions.map((direction) => direction.title),
+          input.graphContext.nodes.map((node) => node.title),
         ),
-        finalProposal,
-        input.learnerProfile,
-        intent,
+        lowerLayer.length,
+        finalProposal.directions.length,
       ),
       finalProposal,
       intent,
-      targetLevel.index,
+      nextHeight,
     );
 
     if (finalValidation.valid && finalValidation.difficultyConsistency && finalValidation.sourceFidelity) break;
     if (revision >= getEnv().AGENT_MAX_REVISIONS || !finalValidation.recommendedRevision) break;
     revisionFeedback = finalValidation.issues.map((issue) => issue.message);
-    runtime.handoff("pedagogy_validator", "learning_path", trace, "Pedagogy Validator requested a revised branch layer.");
-    trace.add("revision", `Branch revision ${revision + 1}: ${revisionFeedback.join(" | ")}`, { agent: "learning_path" });
+    runtime.handoff("pedagogy_validator", "learning_path", trace, "Pedagogy Validator requested a revised stacked Brick row.");
+    trace.add("revision", `Stack revision ${revision + 1}: ${revisionFeedback.join(" | ")}`, { agent: "learning_path" });
   }
 
-  if (!finalProposal || !finalValidation) throw new Error("Branch workflow did not complete.");
-  const validated = finalValidation.valid && finalValidation.difficultyConsistency && finalValidation.sourceFidelity;
-  if (!validated) warnings.push("This branch layer is marked needs review because validation did not fully pass.");
+  if (!finalProposal || !finalValidation || !finalLevel) {
+    throw new Error("Brick stack workflow did not complete.");
+  }
 
-  const existingByTitle = new Map<string, { id: string }>(
-    input.graphContext.nodes.map((item) => [item.normalizedTitle, { id: item.id }]),
-  );
-  const nodes: ConceptNode[] = [];
-  const edges: ConceptEdge[] = [];
-  for (const direction of finalProposal.directions) {
-    const normalizedTitle = normalizeConceptTitle(direction.title);
-    const existing = existingByTitle.get(normalizedTitle);
-    const id = existing?.id ?? conceptId(input.node.id, direction.title);
-    if (id === input.node.id) continue;
-    const knowledgeStatus: ConceptNode["knowledgeStatus"] = direction.title === finalProposal.recommendedTitle
+  const validated = finalValidation.valid && finalValidation.difficultyConsistency && finalValidation.sourceFidelity;
+  if (!validated) warnings.push("This Brick row is marked needs review because validation did not fully pass.");
+
+  const orderedDirections = orderDirectionsForBrickStack(finalProposal.directions, lowerLayer);
+  const nodes: ConceptNode[] = orderedDirections.map((direction, index) => {
+    const id = conceptId(`height:${nextHeight}`, direction.title);
+    const supports = brickSupportNodes(
+      lowerLayer,
+      index,
+      orderedDirections.length,
+      direction.connectsFrom ?? [],
+    );
+    const knowledgeStatus: ConceptNode["knowledgeStatus"] = direction.title === finalProposal!.recommendedTitle
       ? "recommended"
       : direction.missingPrerequisites.length === 0 || direction.readinessScore >= 70
         ? "available"
         : "future";
-    if (!existing) nodes.push({
+    return {
       id,
       title: direction.title,
-      normalizedTitle,
+      normalizedTitle: normalizeConceptTitle(direction.title),
       shortDescription: direction.description,
-      parentId: input.node.id,
+      parentId: supports[0]?.id,
       childIds: [],
-      depth: input.node.depth + 1,
-      level: targetLevel,
+      depth: nextHeight,
+      level: finalLevel!,
       difficulty: direction.difficulty,
       difficultyLabel: difficultyLabel(direction.difficulty),
       difficultyExplanation: direction.difficultyExplanation,
@@ -1136,22 +1397,23 @@ export async function branchFromConcept(input: {
       knowledgeStatus,
       resources: [],
       origins: evidenceOrigins(verifiedEvidenceReferences(direction.evidence ?? [], retrievedEvidence)),
-    });
-    edges.push({
-      id: edgeId(input.node.id, id, "leads-to"),
-      source: input.node.id,
-      target: id,
-      relationshipType: "leads-to",
-      confidence: direction.confidence,
-    });
-  }
+    };
+  });
+  const edges = brickStackEdges(lowerLayer, nodes, orderedDirections);
+  const parentChildren = edges
+    .filter((edge) => edge.source === input.node.id)
+    .map((edge) => edge.target);
 
   return {
     data: {
-      parent: { ...input.node, childIds: [...new Set(edges.map((edge) => edge.target))], knowledgeStatus: "known" },
+      parent: {
+        ...input.node,
+        childIds: [...new Set([...input.node.childIds, ...parentChildren])],
+        knowledgeStatus: "known",
+      },
       nodes,
       edges,
-      level: targetLevel,
+      level: finalLevel,
       learningPath: finalProposal,
       validation: finalValidation,
     },

@@ -487,7 +487,7 @@ export function BrickTreeApp() {
           : nextTraversal.intent === "analyze-question"
             ? `Opening another lens on ${node.title}…`
             : `Tracing what sits underneath ${node.title}…`
-        : `Building outward from ${node.title}…`,
+        : `Constructing the next Brick row above the current top layer, with ${node.title} as the emphasis…`,
     );
     setLoadingNodeId(nodeId);
     try {
@@ -827,6 +827,7 @@ export function BrickTreeApp() {
       <ModeDock mode={mode} onChange={switchMode} />
 
       <AxisRail
+        key={`${activeWorkspaceId ?? mode}:${mode}`}
         axis={modeAxis(mode)}
         levels={availableLevels}
         activeLevel={focusNode ? nodeLevel(focusNode) : 0}
@@ -1098,8 +1099,8 @@ function HierarchyStage({
     : undefined;
 
   const layout = useMemo(() => buildHierarchyLayout(mode, nodes, edges, {
-    nodeGap: 190,
-    rowGap: mode === "tree" ? 178 : 168,
+    nodeGap: mode === "tree" ? 300 : 320,
+    rowGap: mode === "tree" ? 178 : 176,
     // Real canvas buffer keeps focused cards readable at every edge.
     paddingX: 360,
     paddingY: mode === "tree" ? 340 : 380,
