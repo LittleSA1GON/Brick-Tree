@@ -181,6 +181,37 @@ function narrateLevel(
   };
 }
 
+function brickFoundationTitles(
+  knownConcepts: string[],
+  proposal: LearningPathProposal,
+): string[] {
+  const supplied = [...new Set(
+    knownConcepts
+      .map((value) => value.trim())
+      .filter(Boolean),
+  )];
+  const suppliedKeys = new Set(supplied.map(normalizeConceptTitle));
+  const roomForSuggestions = Math.max(
+    0,
+    BRICK_MAX_ROW_SIZE - 1 - supplied.length,
+  );
+  const suggestions = proposal.foundationSuggestions
+    .map((value) => value.trim())
+    .filter(
+      (value) => value && !suppliedKeys.has(normalizeConceptTitle(value)),
+    )
+    .slice(0, roomForSuggestions);
+
+  return [...supplied, ...suggestions];
+}
+
+function desiredBrickRowSize(lowerRowCount: number): number {
+  return Math.max(
+    2,
+    Math.min(BRICK_MAX_ROW_SIZE, lowerRowCount + 1),
+  );
+}
+
 function addBrickStackShapeChecks(
   validation: PedagogyValidation,
   lowerRowCount: number,
