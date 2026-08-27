@@ -74,8 +74,9 @@ describe("Brick Tree 0.8 interaction shell", () => {
     expect(appSource).not.toContain("Resources are loaded only when you ask for them.");
   });
 
-  it("keeps generated graphs centered and provides explicit whole-graph zoom controls", () => {
+  it("keeps generated graphs centered and provides explicit whole-graph zoom controls only after visible nodes exist", () => {
     expect(appSource).toContain("ZoomControls");
+    expect(appSource).toContain("mapNodes.length > 0");
     expect(appSource).toContain("graphZoom");
     expect(appSource).toContain("scaledWidth");
     expect(appSource).toContain("scaledHeight");
@@ -84,6 +85,12 @@ describe("Brick Tree 0.8 interaction shell", () => {
     expect(appStyles).toContain(".zoomControls");
   });
 
+
+  it("scales the complete starting prompt node with viewport width and height and keeps the redundant Direction tab absent", () => {
+    expect(appStyles).toContain("width: clamp(300px, 58vw, 980px)");
+    expect(appStyles).toContain("height: clamp(400px, 68dvh, 780px)");
+    expect(appSource).not.toContain(">Direction<");
+  });
   it("does not load the old React Flow stylesheet into the main application", () => {
     expect(layoutSource).not.toContain("@xyflow/react/dist/style.css");
   });

@@ -826,7 +826,7 @@ export function BrickTreeApp() {
       </button>
 
       <ModeDock mode={mode} onChange={switchMode} />
-      {nodes.length ? (
+      {mapNodes.length > 0 ? (
         <ZoomControls
           value={graphZoom}
           onDecrease={() => setGraphZoom((value) => Math.max(0.65, Math.round((value - 0.1) * 100) / 100))}
