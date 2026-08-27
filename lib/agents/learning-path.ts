@@ -7,6 +7,7 @@ import {
 import type { GraphLevelDescriptor } from "@/lib/schemas/concept";
 import type { BrickIntent } from "@/lib/schemas/session";
 import { levelInvariantSummary } from "@/lib/graph/levels";
+import { learnerFitSummary } from "@/lib/learning/learner-fit";
 
 export type LearningPathInput = {
   knownConcepts: string[];
@@ -23,6 +24,7 @@ function compactProfile(profile?: LearnerProfile) {
   if (!profile) return {};
   return {
     educationLevel: profile.educationLevel,
+    exploreBias: profile.exploreBias,
     existingKnowledge: profile.existingKnowledge.slice(0, 20),
     goal: profile.goal,
     learningGoal: profile.learningGoal,
@@ -93,7 +95,18 @@ Destination behavior:
 
 Explore behavior:
 - Do not silently optimize toward a destination.
-- Favor reachability, usefulness, and diversity of next directions.
+- Respect the learner's educationLevel, knowledgeLevel, and exploreBias before choosing topics.
+- Do not infer an AI, machine-learning, or other advanced technical destination merely because the learner knows algebra, Python, or statistics. Those foundations open many directions.
+- For elementary and middle-school learners, prefer concrete, visual, practical, or foundational next steps.
+- For high-school learners, stay within concepts that are realistically approachable from the stated foundation without assuming college-level mathematics or specialized computing unless the learner explicitly supplied those prerequisites.
+- For college/graduate learners, advanced directions are allowed only when adjacent prerequisites are present.
+- balanced: diversify across useful adjacent directions instead of clustering around one fashionable field.
+- practical: favor directly usable skills, tools, and applications.
+- academic: favor foundational theory and conventional subject progression.
+- creative: favor design, making, expression, and cross-disciplinary applications.
+- career: favor broadly useful employable skills appropriate to the learner's current level.
+- technical: favor deeper technical detail, but still only one adjacent conceptual step.
+- Favor reachability, usefulness, learner fit, and diversity of next directions.
 
 Scores are heuristics from 0-100, not scientific measurements. Pick exactly one recommendedTitle from the candidate directions.
 
@@ -113,10 +126,11 @@ Never invent evidence identifiers or URLs.`,
 Brick intent: ${input.intent}
 Destination: ${input.intent === "destination" ? (input.goal || input.learnerProfile?.learningGoal || input.learnerProfile?.goal || "not specified") : "none"}
 Learner/session profile: ${JSON.stringify(compactProfile(input.learnerProfile))}
+Learner-fit constraint: ${learnerFitSummary(input.learnerProfile)}
 Target peer layer: ${input.targetLevel ? `${JSON.stringify(input.targetLevel)}\n${levelInvariantSummary(input.targetLevel)}` : "Choose one coherent next-step difficulty band."}
 Optional source evidence: ${JSON.stringify(compactEvidence(input.retrievedEvidence))}
 Revision feedback: ${input.revisionFeedback?.slice(0, 6).join(" | ") || "none"}
 
-Construct exactly one adjacent Brick layer. Normally return exactly 4 peer directions; use 3 or 5 only when accuracy requires it. Every direction must be one realistically learnable conceptual step above the current foundation/focused brick and no more than one difficulty point harder. Keep the initial response compact and prioritize the required fields. In destination mode, estimate the absolute destination height from original Height 0 without inventing ungenerated intermediate layers.`;
+Construct exactly one adjacent Brick layer. Treat educationLevel and exploreBias as active constraints, not display metadata. Normally return exactly 4 peer directions; use 3 or 5 only when accuracy requires it. Every direction must be one realistically learnable conceptual step above the current foundation/focused brick and no more than one difficulty point harder. Keep the initial response compact and prioritize the required fields. In destination mode, estimate the absolute destination height from original Height 0 without inventing ungenerated intermediate layers.`;
   },
 };

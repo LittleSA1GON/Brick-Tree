@@ -33,6 +33,7 @@ import { ExplanationLevelSchema, type ExplanationLevel } from "@/lib/schemas/api
 import type { RawSearchResult, ResourceQueryPlan } from "@/lib/schemas/resources";
 import type { RetrievedChunk } from "@/lib/schemas/documents";
 import { evidenceCoverageFindings, verifiedEvidenceReferences } from "@/lib/documents/provenance";
+import { learnerFitIssues } from "@/lib/learning/learner-fit";
 
 const agents = createAgentRegistry();
 const tools = createToolRegistry();
@@ -330,6 +331,31 @@ function addAdjacentStepChecks(
     issues: [
       ...validation.issues,
       ...issues.map((message) => ({ type: "difficulty_mismatch" as const, message })),
+    ].slice(0, 12),
+  };
+}
+
+
+function addLearnerFitChecks(
+  validation: PedagogyValidation,
+  proposal: LearningPathProposal,
+  profile: LearnerProfile | undefined,
+  intent: BrickIntent,
+): PedagogyValidation {
+  const findings = learnerFitIssues(profile, proposal.directions, intent);
+  if (!findings.length) return validation;
+  return {
+    ...validation,
+    valid: false,
+    recommendedRevision: true,
+    coverageAssessment: `${validation.coverageAssessment} Learner-fit check: ${findings.map((finding) => finding.message).join(" ")}`,
+    issues: [
+      ...validation.issues,
+      ...findings.map((finding) => ({
+        type: "learner_mismatch" as const,
+        message: finding.message,
+        affectedTitles: [finding.title],
+      })),
     ].slice(0, 12),
   };
 }
@@ -880,19 +906,24 @@ export async function discoverLearningPath(input: {
       validationBase = validator.data;
     }
     finalValidation = addDestinationHeightChecks(
-      addAdjacentStepChecks(
-        addDeterministicTitleChecks(
-          addDeterministicSourceChecks(
-            addDeterministicDifficultyChecks(validationBase, scores, finalLevel),
-            finalProposal.directions.map((direction) => ({ title: direction.title, evidence: direction.evidence ?? [] })),
-            retrievedEvidence,
-            sourceMode(input.learnerProfile),
+      addLearnerFitChecks(
+        addAdjacentStepChecks(
+          addDeterministicTitleChecks(
+            addDeterministicSourceChecks(
+              addDeterministicDifficultyChecks(validationBase, scores, finalLevel),
+              finalProposal.directions.map((direction) => ({ title: direction.title, evidence: direction.evidence ?? [] })),
+              retrievedEvidence,
+              sourceMode(input.learnerProfile),
+            ),
+            finalProposal.directions.map((direction) => direction.title),
           ),
-          finalProposal.directions.map((direction) => direction.title),
+          finalProposal.foundationAssessment.difficulty,
+          scores,
+          "brick",
         ),
-        finalProposal.foundationAssessment.difficulty,
-        scores,
-        "brick",
+        finalProposal,
+        input.learnerProfile,
+        intent,
       ),
       finalProposal,
       intent,
@@ -1029,20 +1060,25 @@ export async function branchFromConcept(input: {
       validationBase = validator.data;
     }
     finalValidation = addDestinationHeightChecks(
-      addAdjacentStepChecks(
-        addDeterministicTitleChecks(
-          addDeterministicSourceChecks(
-            addDeterministicDifficultyChecks(validationBase, scores, targetLevel),
-            finalProposal.directions.map((direction) => ({ title: direction.title, evidence: direction.evidence ?? [] })),
-            retrievedEvidence,
-            sourceMode(input.learnerProfile),
+      addLearnerFitChecks(
+        addAdjacentStepChecks(
+          addDeterministicTitleChecks(
+            addDeterministicSourceChecks(
+              addDeterministicDifficultyChecks(validationBase, scores, targetLevel),
+              finalProposal.directions.map((direction) => ({ title: direction.title, evidence: direction.evidence ?? [] })),
+              retrievedEvidence,
+              sourceMode(input.learnerProfile),
+            ),
+            finalProposal.directions.map((direction) => direction.title),
+            input.node.title,
           ),
-          finalProposal.directions.map((direction) => direction.title),
-          input.node.title,
+          input.node.difficulty,
+          scores,
+          "brick",
         ),
-        input.node.difficulty,
-        scores,
-        "brick",
+        finalProposal,
+        input.learnerProfile,
+        intent,
       ),
       finalProposal,
       intent,
@@ -1146,16 +1182,18 @@ function deterministicResourcePlan(
 ): ResourceQueryPlan {
   const preferred = (profile?.preferredResourceTypes ?? []).join(" ");
   const level = profile?.knowledgeLevel ?? "beginner";
+  const education = profile?.educationLevel ?? "high-school";
   const purpose = profile?.purpose ?? "general-learning";
+  const audience = `${education} ${level}`;
   const queries: ResourceQueryPlan["queries"] = [
-    { query: `${node.title} ${level} overview`, source: "wikipedia", reason: "Broad reference and terminology." },
+    { query: `${node.title} ${audience} overview`, source: "wikipedia", reason: "Broad reference and terminology matched to the learner's level." },
   ];
   if (node.difficulty >= 4 || purpose === "research" || preferred.includes("paper")) {
     queries.push({ query: `${node.title} research education overview`, source: "academic", reason: "Research-oriented or advanced learning can benefit from scholarly references." });
   }
   if (webSearchAvailable) {
     const preferenceTerms = preferred || (purpose === "project" ? "documentation tutorial" : "tutorial course official documentation");
-    queries.push({ query: `${node.title} ${level} ${preferenceTerms}`, source: "web", reason: "Find practical material aligned with the learner's requested format and level." });
+    queries.push({ query: `${node.title} ${audience} ${preferenceTerms}`, source: "web", reason: "Find practical material aligned with the learner's requested format and level." });
   }
   return { queries };
 }

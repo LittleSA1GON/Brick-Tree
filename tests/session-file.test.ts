@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { createPortableSessionFile, parsePortableSessionFile, safeSessionFileName } from "@/lib/schemas/session-file";
+import {
+  createPortableSessionFile,
+  createPortableWorkspaceFile,
+  parsePortableSessionFile,
+  parsePortableWorkspaceFile,
+  safeSessionFileName,
+  safeWorkspaceFileName,
+} from "@/lib/schemas/session-file";
 import { makeNode } from "./helpers";
 
 function state() {
@@ -100,11 +107,22 @@ describe("portable session files", () => {
     expect(restored.state.workspaces).toEqual([]);
   });
 
+
+  it("round-trips one independent Tree or Brick workspace without replacing a whole session", () => {
+    const workspace = state().workspaces[1]!;
+    const file = createPortableWorkspaceFile(workspace);
+    const restored = parsePortableWorkspaceFile(JSON.parse(JSON.stringify(file)));
+    expect(restored.format).toBe("brick-tree-workspace");
+    expect(restored.workspace.mode).toBe("brick");
+    expect(restored.workspace.name).toBe("Algebra");
+  });
+
   it("rejects arbitrary JSON that is not a Brick Tree session", () => {
     expect(() => parsePortableSessionFile({ hello: "world" })).toThrow();
   });
 
-  it("creates filesystem-safe session filenames", () => {
+  it("creates filesystem-safe session and workspace filenames", () => {
     expect(safeSessionFileName("Machine Learning / Foundations")).toBe("machine-learning-foundations.bricktree.json");
+    expect(safeWorkspaceFileName("Algebra Foundations", "brick")).toBe("algebra-foundations.brick.bricktree.json");
   });
 });

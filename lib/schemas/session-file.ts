@@ -63,6 +63,15 @@ export const PortableWorkspaceStateSchema = z.object({
 });
 export type PortableWorkspaceState = z.infer<typeof PortableWorkspaceStateSchema>;
 
+export const PortableWorkspaceFileSchema = z.object({
+  format: z.literal("brick-tree-workspace"),
+  version: z.literal(1),
+  app: z.literal("Brick Tree"),
+  exportedAt: z.string().datetime(),
+  workspace: PortableWorkspaceStateSchema,
+});
+export type PortableWorkspaceFile = z.infer<typeof PortableWorkspaceFileSchema>;
+
 export const PortableSessionStateSchema = z.object({
   mode: PrimaryModeSchema,
   treeIntent: TreeIntentSchema,
@@ -110,6 +119,20 @@ export function parsePortableSessionFile(value: unknown): PortableSessionFile {
   return PortableSessionFileSchema.parse(value);
 }
 
+export function createPortableWorkspaceFile(workspace: PortableWorkspaceState): PortableWorkspaceFile {
+  return PortableWorkspaceFileSchema.parse({
+    format: "brick-tree-workspace",
+    version: 1,
+    app: "Brick Tree",
+    exportedAt: new Date().toISOString(),
+    workspace,
+  });
+}
+
+export function parsePortableWorkspaceFile(value: unknown): PortableWorkspaceFile {
+  return PortableWorkspaceFileSchema.parse(value);
+}
+
 export function safeSessionFileName(topic: string): string {
   const slug = topic
     .trim()
@@ -118,4 +141,14 @@ export function safeSessionFileName(topic: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 60);
   return `${slug || "brick-tree-session"}.bricktree.json`;
+}
+
+export function safeWorkspaceFileName(name: string, mode: "tree" | "brick"): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+  return `${slug || `brick-tree-${mode}`}.${mode}.bricktree.json`;
 }

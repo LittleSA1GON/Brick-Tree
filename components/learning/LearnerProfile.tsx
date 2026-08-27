@@ -2,6 +2,16 @@
 
 import type { LearnerProfile as LearnerProfileType } from "@/lib/schemas/learning-path";
 
+const EDUCATION_LEVELS = [
+  ["elementary", "Elementary school"],
+  ["middle-school", "Middle school"],
+  ["high-school", "High school"],
+  ["college", "College / university"],
+  ["graduate", "Graduate study"],
+  ["professional", "Professional / specialist"],
+  ["self-directed", "Self-directed"],
+] as const;
+
 export function LearnerProfile({
   profile,
   onChange,
@@ -13,6 +23,29 @@ export function LearnerProfile({
     <details className="profile-editor">
       <summary>Customize learning</summary>
       <div className="profile-grid">
+        <label>
+          Education level
+          <select
+            value={profile.educationLevel ?? "high-school"}
+            onChange={(event) => onChange({ ...profile, educationLevel: event.target.value })}
+          >
+            {EDUCATION_LEVELS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+        <label>
+          Explore bias
+          <select
+            value={profile.exploreBias ?? "balanced"}
+            onChange={(event) => onChange({ ...profile, exploreBias: event.target.value as LearnerProfileType["exploreBias"] })}
+          >
+            <option value="balanced">Balanced breadth</option>
+            <option value="practical">Practical skills</option>
+            <option value="academic">Academic foundations</option>
+            <option value="creative">Creative applications</option>
+            <option value="career">Career usefulness</option>
+            <option value="technical">Technical depth</option>
+          </select>
+        </label>
         <label>
           Knowledge level
           <select
@@ -92,14 +125,6 @@ export function LearnerProfile({
           />
         </label>
         <label>
-          Education level
-          <input
-            value={profile.educationLevel ?? ""}
-            onChange={(event) => onChange({ ...profile, educationLevel: event.target.value || undefined })}
-            placeholder="High school, college, self-taught…"
-          />
-        </label>
-        <label>
           Desired field
           <input
             value={profile.desiredField ?? ""}
@@ -138,7 +163,6 @@ export function LearnerProfile({
             rows={3}
           />
         </label>
-
       </div>
     </details>
   );

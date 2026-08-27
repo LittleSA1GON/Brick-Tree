@@ -6,6 +6,7 @@ const root = process.cwd();
 const appSource = fs.readFileSync(path.join(root, "components/BrickTreeApp.tsx"), "utf8");
 const appStyles = fs.readFileSync(path.join(root, "components/BrickTreeApp.module.css"), "utf8");
 const layoutSource = fs.readFileSync(path.join(root, "app/layout.tsx"), "utf8");
+const pathAgent = fs.readFileSync(path.join(root, "lib/agents/learning-path.ts"), "utf8");
 
 describe("Brick Tree 0.8 interaction shell", () => {
   it("keeps the landing page concise and clearly separates Tree from Brick", () => {
@@ -17,22 +18,22 @@ describe("Brick Tree 0.8 interaction shell", () => {
     expect(appStyles).toContain("clip-path");
   });
 
-  it("uses click-to-focus hierarchy navigation instead of dragging or scroll snapping", () => {
+  it("uses click-to-focus plus two-dimensional scroll/swipe navigation instead of dragging", () => {
     expect(appSource).toContain("HierarchyStage");
     expect(appSource).toContain("CompactNode");
-    expect(appSource).toContain("teleportNode");
-    expect(appSource).not.toContain("scrollIntoView");
+    expect(appSource).toContain("scrollIntoView");
+    expect(appSource).toContain("Scroll or swipe siblings");
     expect(appSource).not.toContain("ReactFlow");
     expect(appSource).not.toContain("onNodesChange");
+    expect(appStyles).toContain("touch-action: pan-x pan-y");
+    expect(appStyles).toContain("overflow: auto");
     expect(appStyles).not.toContain("scroll-snap-type");
   });
 
   it("renders Tree downward with negative depth and Brick upward with positive height", () => {
     expect(appSource).toContain('mode === "tree" ? -offset : offset');
-    expect(appSource).toContain('direction="down"');
-    expect(appSource).toContain('direction="up"');
+    expect(appSource).toContain('mode === "tree" ? -node.depth : node.depth');
     expect(appSource).toContain("Destination · Height +");
-    expect(appSource).toContain("Height 0 · Foundation");
     expect(appSource).not.toContain("0 is your reference point");
   });
 
@@ -41,15 +42,29 @@ describe("Brick Tree 0.8 interaction shell", () => {
     expect(appSource).toContain("Tree maps");
     expect(appSource).toContain("Brick maps");
     expect(appSource).toContain("MiniGraphMap");
-    expect(appSource).toContain("miniEdge");
-    expect(appSource).toContain("New {mode === \"tree\" ? \"Tree\" : \"Brick\"}");
+    expect(appSource).toContain("buildHierarchyLayout");
+    expect(appSource).toContain("Tree - Workspace map");
+    expect(appSource).toContain("Brick - Workspace map");
   });
 
-  it("keeps details and resources inside the focused node", () => {
-    expect(appSource).toContain("Open detail + resources");
-    expect(appSource).toContain("Find resources");
-    expect(appSource).toContain("Branch this node");
-    expect(appSource).toContain("Construct next layer");
+  it("keeps a small map visible and supports importing a single Tree or Brick", () => {
+    expect(appSource).toContain("PersistentMiniMap");
+    expect(appSource).toContain("Upload Tree / Brick");
+    expect(appSource).toContain("createPortableWorkspaceFile");
+    expect(appSource).toContain("parsePortableWorkspaceFile");
+  });
+
+  it("makes learner level and Explore bias active Brick inputs", () => {
+    expect(appSource).toContain("Learner / difficulty level");
+    expect(appSource).toContain("Explore bias");
+    expect(pathAgent).toContain("exploreBias");
+    expect(pathAgent).toContain("Do not infer an AI, machine-learning");
+  });
+
+  it("loads resources automatically for the focused node", () => {
+    expect(appSource).toContain("resourceAttemptedRef");
+    expect(appSource).toContain("Loading resources for this node");
+    expect(appSource).not.toContain("Resources are loaded only when you ask for them.");
   });
 
   it("does not load the old React Flow stylesheet into the main application", () => {

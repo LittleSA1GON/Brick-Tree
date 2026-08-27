@@ -8,8 +8,19 @@ import {
   SourceModeSchema,
 } from "./session";
 
+export const ExploreBiasSchema = z.enum([
+  "balanced",
+  "practical",
+  "academic",
+  "creative",
+  "career",
+  "technical",
+]);
+export type ExploreBias = z.infer<typeof ExploreBiasSchema>;
+
 export const LearnerProfileSchema = z.object({
-  educationLevel: z.string().max(120).optional(),
+  educationLevel: z.string().max(120).default("high-school"),
+  exploreBias: ExploreBiasSchema.default("balanced"),
   existingKnowledge: z.array(z.string().min(1).max(160)).max(60).default([]),
   goal: z.string().max(700).optional(),
   learningGoal: z.string().max(700).optional(),
@@ -55,6 +66,8 @@ export const LearningDirectionProposalSchema = z.object({
   confidence: z.number().min(0).max(1).default(0.75),
   evidence: z.array(EvidenceReferenceSchema).max(6).default([]),
 });
+
+export type LearningDirectionProposal = z.infer<typeof LearningDirectionProposalSchema>;
 
 export const LearningPathProposalSchema = z.object({
   learnerSummary: z.string().min(1).max(700),

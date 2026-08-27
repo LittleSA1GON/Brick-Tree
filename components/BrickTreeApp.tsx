@@ -17,6 +17,7 @@ import type { ExplanationLevel } from "@/lib/schemas/api";
 import type { AgentTraceEvent } from "@/lib/observability/trace";
 import { callAgent } from "@/lib/utils/api-client";
 import { graphContextFromState } from "@/lib/graph/graph-utils";
+import { buildHierarchyLayout } from "@/lib/graph/hierarchy-layout";
 import {
   hasGeneratedTraversalNeighbors,
   mergeGraphPatch,
@@ -29,8 +30,11 @@ import { SessionTransfer } from "@/components/session/SessionTransfer";
 import { normalizeConceptTitle } from "@/lib/utils/text";
 import {
   createPortableSessionFile,
+  createPortableWorkspaceFile,
   parsePortableSessionFile,
+  parsePortableWorkspaceFile,
   safeSessionFileName,
+  safeWorkspaceFileName,
   type PortableSessionState,
 } from "@/lib/schemas/session-file";
 import styles from "./BrickTreeApp.module.css";
@@ -111,6 +115,8 @@ const TREE_INTENT_COPY: Record<
 };
 
 const DEFAULT_PROFILE: LearnerProfileType = {
+  educationLevel: "high-school",
+  exploreBias: "balanced",
   existingKnowledge: [],
   sourceMode: "general",
   sourceDocumentIds: [],
@@ -192,6 +198,7 @@ export function BrickTreeApp() {
   const [explanations, setExplanations] = useState<Record<string, AdaptiveExplanation>>({});
   const [drawerOpen, setDrawerOpen] = useState(false);
   const requestRef = useRef<AbortController | null>(null);
+  const resourceAttemptedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => () => requestRef.current?.abort(), []);
 
@@ -232,8 +239,7 @@ export function BrickTreeApp() {
   const baseDepth = rootNode?.depth ?? 0;
 
   const mapNodes = useMemo(() => nodes
-    .filter((node) => !(mode === "brick" && node.id === rootNode?.id && node.title === "Your Foundations"))
-    .sort((a, b) => a.depth - b.depth || a.title.localeCompare(b.title)), [nodes, mode, rootNode?.id]);
+    .filter((node) => !(mode === "brick" && node.id === rootNode?.id && node.title === "Your Foundations")), [nodes, mode, rootNode?.id]);
 
   const focusNode = useMemo(() => {
     const requested = focusedNodeId ?? selectedNodeId;
@@ -241,36 +247,6 @@ export function BrickTreeApp() {
     if (mode === "brick" && requestedNode && requestedNode.id === rootNode?.id && requestedNode.title === "Your Foundations") return undefined;
     return requestedNode ?? (mode === "tree" ? rootNode : undefined);
   }, [focusedNodeId, selectedNodeId, nodes, mode, rootNode]);
-
-  const focusChildren = useMemo(() => {
-    if (!focusNode) return [];
-    const childIds = edges
-      .filter((edge) => edge.source === focusNode.id && activeRelationships.has(edge.relationshipType))
-      .map((edge) => edge.target);
-    const childSet = new Set(childIds);
-    return nodes.filter((node) => childSet.has(node.id)).sort((a, b) => a.title.localeCompare(b.title));
-  }, [focusNode, edges, activeRelationships, nodes]);
-
-  const focusParent = useMemo(() => {
-    if (!focusNode) return undefined;
-    const incoming = edges.find((edge) => edge.target === focusNode.id && activeRelationships.has(edge.relationshipType));
-    if (incoming) return nodes.find((node) => node.id === incoming.source);
-    return focusNode.parentId ? nodes.find((node) => node.id === focusNode.parentId) : undefined;
-  }, [focusNode, edges, activeRelationships, nodes]);
-
-  const brickFoundations = useMemo(() => {
-    if (mode !== "brick" || !rootNode) return [];
-    return nodes
-      .filter((node) => node.parentId === rootNode.id && node.depth === 0)
-      .sort((a, b) => a.title.localeCompare(b.title));
-  }, [mode, rootNode, nodes]);
-
-  const brickFirstLayer = useMemo(() => {
-    if (mode !== "brick") return [];
-    const foundationIds = new Set(brickFoundations.map((node) => node.id));
-    const targetIds = new Set(edges.filter((edge) => foundationIds.has(edge.source)).map((edge) => edge.target));
-    return nodes.filter((node) => targetIds.has(node.id)).sort((a, b) => a.title.localeCompare(b.title));
-  }, [mode, brickFoundations, edges, nodes]);
 
   const nodeLevel = useCallback((node: ConceptNode) => {
     const offset = Math.max(0, node.depth - baseDepth);
@@ -594,6 +570,16 @@ export function BrickTreeApp() {
     }
   }
 
+  useEffect(() => {
+    if (!focusNode || focusNode.resources.length || resourceLoadingNodeId === focusNode.id) return;
+    const key = `${activeWorkspaceId ?? "workspace"}:${focusNode.id}`;
+    if (resourceAttemptedRef.current.has(key)) return;
+    resourceAttemptedRef.current.add(key);
+    void findResources(focusNode.id);
+    // Resource discovery is intentionally attempted once per focused node/workspace.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeWorkspaceId, focusNode?.id, focusNode?.resources.length]);
+
   function selectNode(nodeId: string, loadExplanation = false) {
     setSelectedNodeId(nodeId);
     setFocusedNodeId(nodeId);
@@ -695,6 +681,74 @@ export function BrickTreeApp() {
     activeWorkspaceId,
   }), [mode, treeIntent, brickIntent, nodes, edges, levels, expandedNodeIds, selectedNodeId, focusedNodeId, viewRootId, goal, knownInput, topic, profile, documents, learningPath, trace, explanations, workspaces, activeWorkspaceId]);
 
+  function activeWorkspaceSnapshot(): WorkspaceSnapshot | undefined {
+    if (!activeWorkspaceId) return undefined;
+    const stored = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
+    return {
+      id: activeWorkspaceId,
+      name: workspaceName(mode),
+      mode,
+      treeIntent,
+      brickIntent,
+      topic,
+      knownInput,
+      goal,
+      nodes,
+      edges,
+      levels,
+      expandedNodeIds: [...expandedNodeIds],
+      selectedNodeId,
+      focusedNodeId,
+      viewRootId,
+      learningPath,
+      trace: trace.slice(-100),
+      explanations,
+      createdAt: stored?.createdAt ?? Date.now(),
+    };
+  }
+
+  function downloadWorkspace() {
+    const workspace = activeWorkspaceSnapshot();
+    if (!workspace) return;
+    const portable = createPortableWorkspaceFile(workspace);
+    const blob = new Blob([JSON.stringify(portable, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = safeWorkspaceFileName(workspace.name, workspace.mode);
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function uploadWorkspace(file: File) {
+    if (file.size > 8 * 1024 * 1024) throw new Error("Brick Tree workspace files are limited to 8 MB.");
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(await file.text());
+    } catch {
+      throw new Error("That file is not valid JSON.");
+    }
+    const saved = parsePortableWorkspaceFile(parsedJson).workspace;
+    const id = typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const imported: WorkspaceSnapshot = {
+      ...saved,
+      id,
+      name: saved.name || (saved.mode === "tree" ? "Imported Tree" : "Imported Brick"),
+      nodes: saved.nodes.map(migrateNode),
+      explanations: saved.explanations as Record<string, AdaptiveExplanation>,
+      createdAt: Date.now(),
+    };
+    setWorkspaces((current) => [...current, imported].slice(-40));
+    applyWorkspace(imported);
+    setPhase("workspace");
+    setDrawerOpen(false);
+    setWarnings([`Imported ${imported.mode === "tree" ? "Tree" : "Brick"}: ${imported.name}.`]);
+  }
+
   function downloadSession() {
     const session = createPortableSessionFile(buildPortableState());
     const blob = new Blob([JSON.stringify(session, null, 2)], { type: "application/json" });
@@ -769,10 +823,6 @@ export function BrickTreeApp() {
 
       <ModeDock mode={mode} onChange={switchMode} />
 
-      <button type="button" className={styles.mapButton} onClick={() => setDrawerOpen((open) => !open)} aria-label="Open map">
-        <span /><span /><span />
-      </button>
-
       <AxisRail
         axis={modeAxis(mode)}
         levels={availableLevels}
@@ -809,20 +859,20 @@ export function BrickTreeApp() {
               onToggleDocument={toggleDocumentSource}
               onUseDocumentAsTopic={useDocumentAsTopic}
               onDownload={downloadSession}
+              onDownloadWorkspace={downloadWorkspace}
               onUpload={uploadSession}
+              onUploadWorkspace={uploadWorkspace}
               onDismissError={() => setError(undefined)}
               onDismissWarnings={() => setWarnings([])}
             />
           </section>
         ) : (
           <HierarchyStage
-            key={`${activeWorkspaceId ?? "workspace"}:${focusNode?.id ?? "overview"}`}
+            key={`${activeWorkspaceId ?? "workspace"}`}
             mode={mode}
+            nodes={mapNodes}
+            edges={edges}
             focusNode={focusNode}
-            focusParent={focusParent}
-            children={focusChildren}
-            foundations={brickFoundations}
-            firstBrickLayer={brickFirstLayer}
             learningPath={learningPath}
             goal={goal}
             selectedNodeId={selectedNodeId}
@@ -835,10 +885,8 @@ export function BrickTreeApp() {
             error={error}
             warnings={warnings}
             onFocus={(id) => selectNode(id, false)}
-            onBack={() => focusParent && teleportNode(focusParent.id)}
             onContinue={(id) => { selectNode(id, false); void expandNode(id); }}
             onExplain={(id) => void explainNode(id, explanationLevel(profile))}
-            onFindResources={(id) => void findResources(id)}
             onMarkKnown={markKnown}
             onTreeFromHere={(id) => branchFromNode(id, "tree")}
             onBrickFromHere={(id) => branchFromNode(id, "brick")}
@@ -846,6 +894,16 @@ export function BrickTreeApp() {
           />
         )}
       </div>
+
+      <PersistentMiniMap
+        mode={mode}
+        nodes={mapNodes}
+        edges={edges}
+        activeNodeId={focusNode?.id ?? selectedNodeId}
+        learningPath={learningPath}
+        goal={goal}
+        onOpen={() => setDrawerOpen(true)}
+      />
 
       <NavigatorDrawer
         open={drawerOpen}
@@ -858,10 +916,13 @@ export function BrickTreeApp() {
         learningPath={learningPath}
         goal={goal}
         hasSession={Boolean(workspaces.length || documents.length)}
+        hasWorkspace={Boolean(activeWorkspaceId)}
         onClose={() => setDrawerOpen(false)}
         onSwitchWorkspace={switchWorkspace}
         onTeleport={teleportNode}
         onDownload={downloadSession}
+        onDownloadWorkspace={downloadWorkspace}
+        onUploadWorkspace={uploadWorkspace}
         onNew={startNewGraph}
       />
     </main>
@@ -927,7 +988,6 @@ function AxisRail({ axis, levels, activeLevel, descriptors, onSelect }: {
 
   return (
     <aside className={styles.axisRail} aria-label={`${axis} levels`}>
-      <span>{axis}</span>
       <div>
         {available.map((level) => (
           <button
@@ -944,6 +1004,7 @@ function AxisRail({ axis, levels, activeLevel, descriptors, onSelect }: {
           </button>
         ))}
       </div>
+      <span>{axis}</span>
       {openLevel !== undefined ? (
         <div className={styles.axisPopover}>
           <strong>{axis} {openLevel > 0 ? `+${openLevel}` : openLevel}</strong>
@@ -971,11 +1032,9 @@ function Buffer({ label }: { label?: string }) {
 
 function HierarchyStage({
   mode,
+  nodes,
+  edges,
   focusNode,
-  focusParent,
-  children,
-  foundations,
-  firstBrickLayer,
   learningPath,
   goal,
   selectedNodeId,
@@ -988,21 +1047,17 @@ function HierarchyStage({
   error,
   warnings,
   onFocus,
-  onBack,
   onContinue,
   onExplain,
-  onFindResources,
   onMarkKnown,
   onTreeFromHere,
   onBrickFromHere,
   onDismissMessages,
 }: {
   mode: PrimaryMode;
+  nodes: ConceptNode[];
+  edges: ConceptEdge[];
   focusNode?: ConceptNode;
-  focusParent?: ConceptNode;
-  children: ConceptNode[];
-  foundations: ConceptNode[];
-  firstBrickLayer: ConceptNode[];
   learningPath?: LearningPathProposal;
   goal: string;
   selectedNodeId?: string;
@@ -1015,15 +1070,14 @@ function HierarchyStage({
   error?: string;
   warnings: string[];
   onFocus: (id: string) => void;
-  onBack: () => void;
   onContinue: (id: string) => void;
   onExplain: (id: string) => void;
-  onFindResources: (id: string) => void;
   onMarkKnown: (id: string) => void;
   onTreeFromHere: (id: string) => void;
   onBrickFromHere: (id: string) => void;
   onDismissMessages: () => void;
 }) {
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
   const destination = mode === "brick" && learningPath?.estimatedDestinationHeight && goal.trim()
     ? {
         title: goal.trim(),
@@ -1032,93 +1086,125 @@ function HierarchyStage({
       }
     : undefined;
 
-  const focusLevel = focusNode ? (mode === "tree" ? -focusNode.depth : focusNode.depth) : 0;
+  const layout = useMemo(() => buildHierarchyLayout(mode, nodes, edges, {
+    nodeGap: 190,
+    rowGap: mode === "tree" ? 178 : 168,
+    paddingX: 220,
+    paddingY: mode === "tree" ? 92 : 110,
+    destinationOffset: destination ? 126 : 0,
+  }), [mode, nodes, edges, destination]);
 
-  const renderCompactRow = (items: ConceptNode[], direction: "up" | "down") => (
-    <div className={`${styles.compactRow} ${direction === "up" ? styles.rowUp : styles.rowDown}`}>
-      {items.map((node, index) => (
-        <CompactNode
-          key={node.id}
-          node={node}
-          mode={mode}
-          level={mode === "tree" ? -node.depth : node.depth}
-          selected={selectedNodeId === node.id}
-          recommended={Boolean(learningPath?.recommendedTitle === node.title)}
-          delay={index * 70}
-          onClick={() => onFocus(node.id)}
-        />
-      ))}
-    </div>
-  );
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const target = scroller.querySelector<HTMLElement>('[data-focus-target="true"]');
+    if (!target) {
+      if (mode === "brick") scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      target.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+    }, 40);
+    return () => window.clearTimeout(timer);
+  }, [focusNode?.id, mode, layout.height, layout.width]);
 
-  if (mode === "brick" && !focusNode) {
-    return (
-      <section className={`${styles.hierarchyStage} ${styles.brickStage}`}>
-        {destination ? <DestinationNode destination={destination} /> : null}
-        {destination ? <div className={styles.destinationGap}><span />Estimated Height +{destination.height}</div> : null}
-        {firstBrickLayer.length ? renderCompactRow(firstBrickLayer, "up") : null}
-        {firstBrickLayer.length && foundations.length ? <ConnectorBand count={Math.max(firstBrickLayer.length, foundations.length)} direction="up" /> : null}
-        {foundations.length ? (
-          <div className={styles.foundationBlock}>
-            <span className={styles.layerLabel}>Height 0 · Foundation</span>
-            {renderCompactRow(foundations, "down")}
-          </div>
-        ) : null}
-        {busyLabel ? <Buffer label={busyLabel} /> : null}
-      </section>
-    );
-  }
-
-  if (!focusNode) return null;
-
-  const focusCard = (
-    <KnowledgeNode
-      node={focusNode}
-      mode={mode}
-      level={focusLevel}
-      selected={selectedNodeId === focusNode.id}
-      recommended={Boolean(learningPath?.recommendedTitle === focusNode.title)}
-      recommendationReason={learningPath?.recommendedTitle === focusNode.title ? learningPath.recommendationReason : undefined}
-      explanation={explanations[focusNode.id]}
-      generated={generatedNodeIds.has(focusNode.id)}
-      busy={loadingNodeId === focusNode.id}
-      busyLabel={loadingNodeId === focusNode.id ? busyLabel : undefined}
-      explanationLoading={explanationLoadingNodeId === focusNode.id}
-      resourceLoading={resourceLoadingNodeId === focusNode.id}
-      error={selectedNodeId === focusNode.id ? error : undefined}
-      warnings={selectedNodeId === focusNode.id ? warnings : []}
-      onExplain={() => onExplain(focusNode.id)}
-      onContinue={() => onContinue(focusNode.id)}
-      onFindResources={() => onFindResources(focusNode.id)}
-      onMarkKnown={() => onMarkKnown(focusNode.id)}
-      onTreeFromHere={() => onTreeFromHere(focusNode.id)}
-      onBrickFromHere={() => onBrickFromHere(focusNode.id)}
-      onDismissMessages={onDismissMessages}
-    />
-  );
+  const topBrickDepth = nodes.reduce((value, node) => Math.max(value, node.depth), 0);
 
   return (
     <section className={`${styles.hierarchyStage} ${mode === "tree" ? styles.treeStage : styles.brickStage}`}>
-      <div className={styles.focusToolbar}>
-        {focusParent ? <button type="button" onClick={onBack}>← {mode === "tree" ? "Previous branch" : "Previous layer"}</button> : <span />}
-        <span>{levelLabel(mode, focusLevel)}</span>
-      </div>
+      <div ref={scrollerRef} className={styles.graphScroller} aria-label={`${mode === "tree" ? "Tree" : "Brick"} graph. Scroll vertically and horizontally; swipe on touch devices.`}>
+        <div className={styles.graphCanvas} style={{ width: layout.width, height: layout.height }}>
+          <svg className={styles.graphEdges} viewBox={`0 0 ${layout.width} ${layout.height}`} aria-hidden="true">
+            {edges.map((edge) => {
+              const source = layout.positions.get(edge.source);
+              const target = layout.positions.get(edge.target);
+              if (!source || !target) return null;
+              const middleY = (source.y + target.y) / 2;
+              return (
+                <path
+                  key={edge.id}
+                  d={`M ${source.x} ${source.y} C ${source.x} ${middleY}, ${target.x} ${middleY}, ${target.x} ${target.y}`}
+                  className={styles.graphEdge}
+                />
+              );
+            })}
+            {destination ? (
+              <path
+                d={`M ${layout.width / 2} 54 L ${layout.width / 2} ${126 + 56}`}
+                className={`${styles.graphEdge} ${styles.graphEdgeDashed}`}
+              />
+            ) : null}
+          </svg>
 
-      {mode === "tree" ? (
-        <>
-          {focusCard}
-          {children.length ? <ConnectorBand count={children.length} direction="down" /> : null}
-          {children.length ? renderCompactRow(children, "down") : null}
-        </>
-      ) : (
-        <>
-          {destination ? <DestinationNode destination={destination} /> : null}
-          {destination && children.length ? <div className={styles.destinationGap}><span />Destination remains above the generated layers</div> : null}
-          {children.length ? renderCompactRow(children, "up") : null}
-          {children.length ? <ConnectorBand count={children.length} direction="up" /> : null}
-          {focusCard}
-        </>
-      )}
+          {destination ? (
+            <div className={styles.graphDestination} style={{ left: layout.width / 2, top: 48 }}>
+              <DestinationNode destination={destination} />
+            </div>
+          ) : null}
+
+          {nodes.map((node, index) => {
+            const point = layout.positions.get(node.id);
+            if (!point) return null;
+            const focused = focusNode?.id === node.id;
+            const level = mode === "tree" ? -node.depth : node.depth;
+            const treeScale = Math.max(0.58, 1 - node.depth * 0.065);
+            const brickDistance = Math.abs(topBrickDepth - node.depth);
+            const compactScale = mode === "tree" ? treeScale : Math.max(0.72, 0.94 - brickDistance * 0.025);
+
+            return (
+              <div
+                key={node.id}
+                className={`${styles.graphNodeWrapper} ${focused ? styles.graphNodeFocused : ""}`}
+                style={{
+                  left: point.x,
+                  top: point.y,
+                  transform: `translate(-50%, -50%) scale(${focused ? 1 : compactScale})`,
+                }}
+                data-focus-target={focused ? "true" : undefined}
+              >
+                {focused ? (
+                  <KnowledgeNode
+                    node={node}
+                    mode={mode}
+                    level={level}
+                    selected={selectedNodeId === node.id}
+                    recommended={Boolean(learningPath?.recommendedTitle === node.title)}
+                    recommendationReason={learningPath?.recommendedTitle === node.title ? learningPath.recommendationReason : undefined}
+                    explanation={explanations[node.id]}
+                    generated={generatedNodeIds.has(node.id)}
+                    busy={loadingNodeId === node.id}
+                    busyLabel={loadingNodeId === node.id ? busyLabel : undefined}
+                    explanationLoading={explanationLoadingNodeId === node.id}
+                    resourceLoading={resourceLoadingNodeId === node.id}
+                    error={selectedNodeId === node.id ? error : undefined}
+                    warnings={selectedNodeId === node.id ? warnings : []}
+                    onExplain={() => onExplain(node.id)}
+                    onContinue={() => onContinue(node.id)}
+                    onMarkKnown={() => onMarkKnown(node.id)}
+                    onTreeFromHere={() => onTreeFromHere(node.id)}
+                    onBrickFromHere={() => onBrickFromHere(node.id)}
+                    onDismissMessages={onDismissMessages}
+                  />
+                ) : (
+                  <CompactNode
+                    node={node}
+                    mode={mode}
+                    level={level}
+                    selected={selectedNodeId === node.id}
+                    recommended={Boolean(learningPath?.recommendedTitle === node.title)}
+                    delay={Math.min(index * 45, 360)}
+                    onClick={() => onFocus(node.id)}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div className={styles.navigationHint}>
+        <span>↕ Scroll levels</span>
+        <span>↔ Scroll or swipe siblings</span>
+      </div>
     </section>
   );
 }
@@ -1130,18 +1216,6 @@ function DestinationNode({ destination }: { destination: { title: string; height
       <strong>{destination.title}</strong>
       <p>{destination.reason}</p>
     </article>
-  );
-}
-
-function ConnectorBand({ count, direction }: { count: number; direction: "up" | "down" }) {
-  return (
-    <div className={`${styles.connectorBand} ${direction === "up" ? styles.connectorUp : styles.connectorDown}`} aria-hidden="true">
-      <span className={styles.connectorStem} />
-      <span className={styles.connectorBar} />
-      <div className={styles.connectorDrops}>
-        {Array.from({ length: Math.max(1, count) }, (_, index) => <i key={index} />)}
-      </div>
-    </div>
   );
 }
 
@@ -1195,7 +1269,9 @@ function SetupNode({
   onToggleDocument,
   onUseDocumentAsTopic,
   onDownload,
+  onDownloadWorkspace,
   onUpload,
+  onUploadWorkspace,
   onDismissError,
   onDismissWarnings,
 }: {
@@ -1223,7 +1299,9 @@ function SetupNode({
   onToggleDocument: (id: string) => void;
   onUseDocumentAsTopic: (document: ExtractedDocument) => void;
   onDownload: () => void;
+  onDownloadWorkspace: () => void;
   onUpload: (file: File) => Promise<void>;
+  onUploadWorkspace: (file: File) => Promise<void>;
   onDismissError: () => void;
   onDismissWarnings: () => void;
 }) {
@@ -1267,6 +1345,35 @@ function SetupNode({
                 <option value="destination">Build toward a destination</option>
               </select>
             </label>
+            <label>Learner / difficulty level
+              <select
+                value={profile.educationLevel ?? "high-school"}
+                onChange={(event) => onProfileChange({ ...profile, educationLevel: event.target.value })}
+              >
+                <option value="elementary">Elementary school</option>
+                <option value="middle-school">Middle school</option>
+                <option value="high-school">High school</option>
+                <option value="college">College / university</option>
+                <option value="graduate">Graduate study</option>
+                <option value="professional">Professional / specialist</option>
+                <option value="self-directed">Self-directed</option>
+              </select>
+            </label>
+            {brickIntent === "explore" ? (
+              <label>Explore bias
+                <select
+                  value={profile.exploreBias ?? "balanced"}
+                  onChange={(event) => onProfileChange({ ...profile, exploreBias: event.target.value as LearnerProfileType["exploreBias"] })}
+                >
+                  <option value="balanced">Balanced breadth</option>
+                  <option value="practical">Practical skills</option>
+                  <option value="academic">Academic foundations</option>
+                  <option value="creative">Creative applications</option>
+                  <option value="career">Career usefulness</option>
+                  <option value="technical">Technical depth</option>
+                </select>
+              </label>
+            ) : null}
             <label className={styles.fullField}>What do you already know?
               <textarea rows={3} value={knownInput} onChange={(event) => onKnownInputChange(event.target.value)} placeholder="Algebra, Python, basic statistics…" />
             </label>
@@ -1291,7 +1398,15 @@ function SetupNode({
               onToggleActive={onToggleDocument}
               onUseAsTopic={onUseDocumentAsTopic}
             />
-            <SessionTransfer hasSession={Boolean(documents.length)} onDownload={onDownload} onUpload={onUpload} />
+            <SessionTransfer
+              hasSession={Boolean(documents.length)}
+              hasWorkspace={false}
+              mode={mode}
+              onDownload={onDownload}
+              onDownloadWorkspace={onDownloadWorkspace}
+              onUpload={onUpload}
+              onUploadWorkspace={onUploadWorkspace}
+            />
           </div>
         </details>
 
@@ -1321,7 +1436,6 @@ function KnowledgeNode({
   warnings,
   onExplain,
   onContinue,
-  onFindResources,
   onMarkKnown,
   onTreeFromHere,
   onBrickFromHere,
@@ -1343,7 +1457,6 @@ function KnowledgeNode({
   warnings: string[];
   onExplain: () => void;
   onContinue: () => void;
-  onFindResources: () => void;
   onMarkKnown: () => void;
   onTreeFromHere: () => void;
   onBrickFromHere: () => void;
@@ -1408,9 +1521,7 @@ function KnowledgeNode({
           <section>
             <div className={styles.resourceHeader}>
               <h3>Resources</h3>
-              <button type="button" onClick={onFindResources} disabled={resourceLoading}>
-                {resourceLoading ? "Finding…" : node.resources.length ? "Refresh" : "Find resources"}
-              </button>
+              <span>{resourceLoading ? "Loading…" : node.resources.length ? "Ready" : "Unavailable"}</span>
             </div>
             {node.resources.length ? (
               <div className={styles.resources}>
@@ -1421,7 +1532,7 @@ function KnowledgeNode({
                   </a>
                 ))}
               </div>
-            ) : <p>Resources are loaded only when you ask for them.</p>}
+            ) : <p>{resourceLoading ? "Loading resources for this node…" : "No resource links are available for this node yet."}</p>}
           </section>
 
           <div className={styles.secondaryActions}>
@@ -1455,10 +1566,13 @@ function NavigatorDrawer({
   learningPath,
   goal,
   hasSession,
+  hasWorkspace,
   onClose,
   onSwitchWorkspace,
   onTeleport,
   onDownload,
+  onDownloadWorkspace,
+  onUploadWorkspace,
   onNew,
 }: {
   open: boolean;
@@ -1471,21 +1585,36 @@ function NavigatorDrawer({
   learningPath?: LearningPathProposal;
   goal: string;
   hasSession: boolean;
+  hasWorkspace: boolean;
   onClose: () => void;
   onSwitchWorkspace: (id: string) => void;
   onTeleport: (id: string) => void;
   onDownload: () => void;
+  onDownloadWorkspace: () => void;
+  onUploadWorkspace: (file: File) => Promise<void>;
   onNew: () => void;
 }) {
+  const workspaceInputRef = useRef<HTMLInputElement | null>(null);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const treeWorkspaces = workspaces.filter((workspace) => workspace.mode === "tree");
   const brickWorkspaces = workspaces.filter((workspace) => workspace.mode === "brick");
+
+  async function importWorkspace(file: File) {
+    setWorkspaceLoading(true);
+    try {
+      await onUploadWorkspace(file);
+    } finally {
+      setWorkspaceLoading(false);
+      if (workspaceInputRef.current) workspaceInputRef.current.value = "";
+    }
+  }
 
   return (
     <aside className={`${styles.navigator} ${open ? styles.navigatorOpen : ""}`} aria-hidden={!open}>
       <header>
         <div>
-          <small>Workspace map</small>
-          <strong>{mode === "tree" ? "Tree" : "Brick"}</strong>
+          <strong>{mode === "tree" ? "Tree - Workspace map" : "Brick - Workspace map"}</strong>
+          <small>Click any node to jump there.</small>
         </div>
         <button type="button" onClick={onClose}>×</button>
       </header>
@@ -1532,97 +1661,140 @@ function NavigatorDrawer({
 
       <footer>
         <button type="button" onClick={onNew}>New {mode === "tree" ? "Tree" : "Brick"}</button>
+        <button type="button" disabled={!hasWorkspace} onClick={onDownloadWorkspace}>Download {mode}</button>
+        <button type="button" disabled={workspaceLoading} onClick={() => workspaceInputRef.current?.click()}>
+          {workspaceLoading ? "Loading…" : "Upload Tree / Brick"}
+        </button>
+        <input
+          ref={workspaceInputRef}
+          hidden
+          type="file"
+          accept=".json,.bricktree.json,application/json"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void importWorkspace(file);
+          }}
+        />
         <button type="button" disabled={!hasSession} onClick={onDownload}>Download session</button>
       </footer>
     </aside>
   );
 }
 
-function MiniGraphMap({ mode, nodes, edges, activeNodeId, destination, onTeleport }: {
+function PersistentMiniMap({
+  mode,
+  nodes,
+  edges,
+  activeNodeId,
+  learningPath,
+  goal,
+  onOpen,
+}: {
+  mode: PrimaryMode;
+  nodes: ConceptNode[];
+  edges: ConceptEdge[];
+  activeNodeId?: string;
+  learningPath?: LearningPathProposal;
+  goal: string;
+  onOpen: () => void;
+}) {
+  return (
+    <aside className={styles.persistentMap} aria-label={`${mode === "tree" ? "Tree" : "Brick"} mini map`}>
+      <span className={styles.persistentMapTitle}>{mode === "tree" ? "Tree" : "Brick"} map</span>
+      <MiniGraphMap
+        mode={mode}
+        nodes={nodes}
+        edges={edges}
+        activeNodeId={activeNodeId}
+        destination={mode === "brick" && learningPath?.estimatedDestinationHeight && goal.trim()
+          ? { title: goal.trim(), height: learningPath.estimatedDestinationHeight }
+          : undefined}
+        onTeleport={() => onOpen()}
+        compact
+      />
+      <button type="button" className={styles.persistentMapLaunch} onClick={onOpen}>Open map</button>
+    </aside>
+  );
+}
+
+function MiniGraphMap({ mode, nodes, edges, activeNodeId, destination, onTeleport, compact = false }: {
   mode: PrimaryMode;
   nodes: ConceptNode[];
   edges: ConceptEdge[];
   activeNodeId?: string;
   destination?: { title: string; height: number };
   onTeleport: (id: string) => void;
+  compact?: boolean;
 }) {
-  if (!nodes.length) return <p className={styles.emptyMap}>Your map will appear here.</p>;
+  if (!nodes.length) return <div className={`${styles.miniGraph} ${compact ? styles.miniGraphCompact : ""}`}><p className={styles.emptyMap}>Map starts here.</p></div>;
 
-  const grouped = new Map<number, ConceptNode[]>();
-  for (const node of nodes) {
-    const items = grouped.get(node.depth) ?? [];
-    items.push(node);
-    grouped.set(node.depth, items);
-  }
-  for (const items of grouped.values()) items.sort((a, b) => a.title.localeCompare(b.title));
-
-  const depths = [...grouped.keys()].sort((a, b) => mode === "tree" ? a - b : b - a);
-  const destinationOffset = destination ? 74 : 0;
-  const rowGap = 92;
-  const width = 1000;
-  const positions = new Map<string, { x: number; y: number }>();
-
-  depths.forEach((depth, rowIndex) => {
-    const row = grouped.get(depth) ?? [];
-    row.forEach((node, index) => {
-      positions.set(node.id, {
-        x: ((index + 1) / (row.length + 1)) * width,
-        y: destinationOffset + 42 + rowIndex * rowGap,
-      });
-    });
+  const layout = buildHierarchyLayout(mode, nodes, edges, {
+    nodeGap: compact ? 118 : 150,
+    rowGap: compact ? 74 : 98,
+    paddingX: compact ? 58 : 88,
+    paddingY: compact ? 36 : 54,
+    destinationOffset: destination ? (compact ? 56 : 82) : 0,
   });
-
-  const height = Math.max(170, destinationOffset + depths.length * rowGap + 54);
+  const scale = compact ? Math.min(1, 218 / layout.width) : 1;
+  const renderWidth = Math.max(compact ? 210 : 640, layout.width * scale);
+  const renderHeight = Math.max(compact ? 118 : 190, layout.height * scale);
 
   return (
-    <div className={styles.miniGraph} style={{ height }}>
-      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
-        {edges.map((edge) => {
-          const source = positions.get(edge.source);
-          const target = positions.get(edge.target);
-          if (!source || !target) return null;
-          const midY = (source.y + target.y) / 2;
-          return (
+    <div className={`${styles.miniGraph} ${compact ? styles.miniGraphCompact : ""}`}>
+      <div className={styles.miniGraphCanvas} style={{ width: renderWidth, height: renderHeight }}>
+        <svg viewBox={`0 0 ${layout.width} ${layout.height}`} preserveAspectRatio="none" aria-hidden="true">
+          {edges.map((edge) => {
+            const source = layout.positions.get(edge.source);
+            const target = layout.positions.get(edge.target);
+            if (!source || !target) return null;
+            const midY = (source.y + target.y) / 2;
+            return (
+              <path
+                key={edge.id}
+                d={`M ${source.x} ${source.y} C ${source.x} ${midY}, ${target.x} ${midY}, ${target.x} ${target.y}`}
+                className={styles.miniEdge}
+              />
+            );
+          })}
+          {destination ? (
             <path
-              key={edge.id}
-              d={`M ${source.x} ${source.y} C ${source.x} ${midY}, ${target.x} ${midY}, ${target.x} ${target.y}`}
-              className={styles.miniEdge}
+              d={`M ${layout.width / 2} 28 L ${layout.width / 2} ${compact ? 78 : 116}`}
+              className={`${styles.miniEdge} ${styles.miniEdgeDashed}`}
             />
+          ) : null}
+        </svg>
+
+        {destination ? (
+          <div
+            className={styles.miniDestination}
+            style={{ left: "50%", top: compact ? 10 : 16, transform: `translateX(-50%) scale(${compact ? 0.72 : 1})` }}
+          >
+            <small>+{destination.height}</small>
+            <strong>{destination.title}</strong>
+          </div>
+        ) : null}
+
+        {nodes.map((node) => {
+          const position = layout.positions.get(node.id);
+          if (!position) return null;
+          return (
+            <button
+              key={node.id}
+              type="button"
+              className={`${styles.miniNode} ${compact ? styles.miniNodeCompact : ""} ${node.id === activeNodeId ? styles.miniNodeActive : ""}`}
+              style={{ left: position.x * scale, top: position.y * scale }}
+              onClick={(event) => {
+                event.stopPropagation();
+                onTeleport(node.id);
+              }}
+              title={node.shortDescription}
+            >
+              <small>{mode === "tree" ? -node.depth : node.depth > 0 ? `+${node.depth}` : "0"}</small>
+              {!compact ? <span>{node.title}</span> : null}
+            </button>
           );
         })}
-        {destination && depths.length ? (
-          <path
-            d={`M 500 42 L 500 ${destinationOffset + 18}`}
-            className={`${styles.miniEdge} ${styles.miniEdgeDashed}`}
-          />
-        ) : null}
-      </svg>
-
-      {destination ? (
-        <div className={styles.miniDestination}>
-          <small>+{destination.height}</small>
-          <strong>{destination.title}</strong>
-        </div>
-      ) : null}
-
-      {nodes.map((node) => {
-        const position = positions.get(node.id);
-        if (!position) return null;
-        return (
-          <button
-            key={node.id}
-            type="button"
-            className={`${styles.miniNode} ${node.id === activeNodeId ? styles.miniNodeActive : ""}`}
-            style={{ left: `${position.x / 10}%`, top: position.y }}
-            onClick={() => onTeleport(node.id)}
-            title={node.shortDescription}
-          >
-            <small>{mode === "tree" ? -node.depth : node.depth > 0 ? `+${node.depth}` : "0"}</small>
-            <span>{node.title}</span>
-          </button>
-        );
-      })}
+      </div>
     </div>
   );
 }
-
