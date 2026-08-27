@@ -253,7 +253,7 @@ export function BrickTreeApp() {
     return mode === "tree" ? -offset : offset;
   }, [baseDepth, mode]);
 
-  const availableLevels = useMemo(() => [...new Set(mapNodes.map((node) => nodeLevel(node)))].sort((a, b) => mode === "tree" ? b - a : a - b), [mapNodes, nodeLevel, mode]);
+  const availableLevels = useMemo(() => [...new Set(mapNodes.map((node) => nodeLevel(node)))].sort((a, b) => b - a), [mapNodes, nodeLevel]);
 
   const agentDocuments = useMemo(() => {
     if ((profile.sourceMode ?? "general") === "general") return undefined;
