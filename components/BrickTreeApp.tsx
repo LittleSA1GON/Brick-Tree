@@ -826,12 +826,14 @@ export function BrickTreeApp() {
       </button>
 
       <ModeDock mode={mode} onChange={switchMode} />
-      <ZoomControls
-        value={graphZoom}
-        onDecrease={() => setGraphZoom((value) => Math.max(0.65, Math.round((value - 0.1) * 100) / 100))}
-        onIncrease={() => setGraphZoom((value) => Math.min(1.45, Math.round((value + 0.1) * 100) / 100))}
-        onReset={() => setGraphZoom(1)}
-      />
+      {nodes.length ? (
+        <ZoomControls
+          value={graphZoom}
+          onDecrease={() => setGraphZoom((value) => Math.max(0.65, Math.round((value - 0.1) * 100) / 100))}
+          onIncrease={() => setGraphZoom((value) => Math.min(1.45, Math.round((value + 0.1) * 100) / 100))}
+          onReset={() => setGraphZoom(1)}
+        />
+      ) : null}
 
       <AxisRail
         key={`${activeWorkspaceId ?? mode}:${mode}`}
@@ -858,7 +860,6 @@ export function BrickTreeApp() {
               busyLabel={busyLabel}
               error={error}
               warnings={warnings}
-              onModeChange={switchMode}
               onTreeIntentChange={setTreeIntent}
               onBrickIntentChange={setBrickIntent}
               onTopicChange={setTopic}
@@ -1379,7 +1380,6 @@ function SetupNode({
   busyLabel,
   error,
   warnings,
-  onModeChange,
   onTreeIntentChange,
   onBrickIntentChange,
   onTopicChange,
@@ -1409,7 +1409,6 @@ function SetupNode({
   busyLabel?: string;
   error?: string;
   warnings: string[];
-  onModeChange: (mode: PrimaryMode) => void;
   onTreeIntentChange: (intent: TreeIntent) => void;
   onBrickIntentChange: (intent: BrickIntent) => void;
   onTopicChange: (value: string) => void;
@@ -1434,12 +1433,6 @@ function SetupNode({
       <div className={styles.nodeMeta}><span>{axis} 0</span><b>Starting point</b></div>
       <header className={styles.setupHeader}>
         <div><p>Start here</p><h2>{mode === "tree" ? "What do you want to understand?" : "What do you already understand?"}</h2></div>
-        <label className={styles.compactSelect}>Direction
-          <select value={mode} onChange={(event) => onModeChange(event.target.value as PrimaryMode)}>
-            <option value="tree">Tree</option>
-            <option value="brick">Brick</option>
-          </select>
-        </label>
       </header>
       <form className={styles.setupForm} onSubmit={onGenerate}>
         {mode === "tree" ? (
