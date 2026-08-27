@@ -42,9 +42,8 @@ export async function GET() {
       deterministicPedagogyValidation: env.PEDAGOGY_VALIDATION_MODE === "deterministic",
     },
     resources: {
-      wikipedia: false,
+      institutionalCatalog: true,
       crossref: true,
-      institutionalWeb: Boolean(env.TAVILY_API_KEY),
       tavily: Boolean(env.TAVILY_API_KEY),
     },
     ragConfigured: Boolean(env.LOCAL_RAG_BASE_URL),

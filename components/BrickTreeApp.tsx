@@ -197,6 +197,7 @@ export function BrickTreeApp() {
   const [explanationLoadingNodeId, setExplanationLoadingNodeId] = useState<string>();
   const [explanations, setExplanations] = useState<Record<string, AdaptiveExplanation>>({});
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [graphZoom, setGraphZoom] = useState(1);
   const requestRef = useRef<AbortController | null>(null);
   const resourceAttemptedRef = useRef<Set<string>>(new Set());
 
@@ -825,6 +826,12 @@ export function BrickTreeApp() {
       </button>
 
       <ModeDock mode={mode} onChange={switchMode} />
+      <ZoomControls
+        value={graphZoom}
+        onDecrease={() => setGraphZoom((value) => Math.max(0.65, Math.round((value - 0.1) * 100) / 100))}
+        onIncrease={() => setGraphZoom((value) => Math.min(1.45, Math.round((value + 0.1) * 100) / 100))}
+        onReset={() => setGraphZoom(1)}
+      />
 
       <AxisRail
         key={`${activeWorkspaceId ?? mode}:${mode}`}
@@ -875,6 +882,7 @@ export function BrickTreeApp() {
           <HierarchyStage
             key={`${activeWorkspaceId ?? "workspace"}`}
             mode={mode}
+            zoom={graphZoom}
             nodes={mapNodes}
             edges={edges}
             focusNode={focusNode}
@@ -983,6 +991,22 @@ function ModeDock({ mode, onChange }: { mode: PrimaryMode; onChange: (mode: Prim
   );
 }
 
+
+function ZoomControls({ value, onDecrease, onIncrease, onReset }: {
+  value: number;
+  onDecrease: () => void;
+  onIncrease: () => void;
+  onReset: () => void;
+}) {
+  return (
+    <div className={styles.zoomControls} aria-label="Graph zoom controls">
+      <button type="button" onClick={onDecrease} disabled={value <= 0.65} aria-label="Zoom out">−</button>
+      <button type="button" className={styles.zoomValue} onClick={onReset} aria-label="Reset graph zoom">{Math.round(value * 100)}%</button>
+      <button type="button" onClick={onIncrease} disabled={value >= 1.45} aria-label="Zoom in">+</button>
+    </div>
+  );
+}
+
 function AxisRail({ axis, levels, activeLevel, descriptors, dismissKey, onSelect }: {
   axis: "Depth" | "Height";
   levels: number[];
@@ -1078,6 +1102,7 @@ function Buffer({ label }: { label?: string }) {
 
 function HierarchyStage({
   mode,
+  zoom,
   nodes,
   edges,
   focusNode,
@@ -1102,6 +1127,7 @@ function HierarchyStage({
   onDismissMessages,
 }: {
   mode: PrimaryMode;
+  zoom: number;
   nodes: ConceptNode[];
   edges: ConceptEdge[];
   focusNode?: ConceptNode;
@@ -1126,6 +1152,7 @@ function HierarchyStage({
   onDismissMessages: () => void;
 }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const [viewportSize, setViewportSize] = useState({ width: 1200, height: 760 });
   const destination = mode === "brick" && learningPath?.estimatedDestinationHeight && goal.trim()
     ? {
         title: goal.trim(),
@@ -1134,31 +1161,55 @@ function HierarchyStage({
       }
     : undefined;
 
-  const layout = useMemo(() => buildHierarchyLayout(mode, nodes, edges, {
-    nodeGap: mode === "tree" ? 300 : 320,
-    rowGap: mode === "tree" ? 178 : 176,
-    // Real canvas buffer keeps focused cards readable at every edge.
-    // Expanded cards can reach ~760px wide / ~840px tall. These margins are
-    // real canvas space (not just scroll-padding), so edge nodes can always be
-    // scrolled completely into view on laptops, phones, and short windows.
-    paddingX: 540,
-    paddingY: mode === "tree" ? 540 : 600,
-    destinationOffset: destination ? 126 : 0,
-  }), [mode, nodes, edges, destination]);
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const update = () => setViewportSize({ width: scroller.clientWidth || 1200, height: scroller.clientHeight || 760 });
+    update();
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : undefined;
+    observer?.observe(scroller);
+    window.addEventListener("resize", update);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, []);
+
+  const layout = useMemo(() => {
+    const aspect = viewportSize.width / Math.max(1, viewportSize.height);
+    const nodeGap = Math.round(Math.max(250, Math.min(aspect > 1.8 ? 380 : 340, viewportSize.width * (aspect > 1.8 ? 0.2 : 0.28))));
+    const rowGap = Math.round(Math.max(158, Math.min(220, viewportSize.height * 0.24)));
+    const paddingX = Math.round(Math.max(220, Math.min(420, viewportSize.width * 0.3)));
+    const paddingY = Math.round(Math.max(240, Math.min(420, viewportSize.height * 0.42)));
+    return buildHierarchyLayout(mode, nodes, edges, {
+      nodeGap: mode === "tree" ? nodeGap : Math.max(nodeGap, 280),
+      rowGap,
+      paddingX,
+      paddingY: mode === "tree" ? paddingY : Math.max(paddingY, 300),
+      destinationOffset: destination ? 126 : 0,
+    });
+  }, [mode, nodes, edges, destination, viewportSize]);
+
+  const scaledWidth = Math.max(viewportSize.width, Math.ceil(layout.width * zoom));
+  const scaledHeight = Math.max(viewportSize.height, Math.ceil(layout.height * zoom));
 
   useEffect(() => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
-    const target = scroller.querySelector<HTMLElement>('[data-focus-target="true"]');
-    if (!target) {
-      if (mode === "brick") scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
-      return;
-    }
     const timer = window.setTimeout(() => {
-      target.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
-    }, 40);
+      const target = scroller.querySelector<HTMLElement>('[data-focus-target="true"]');
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+        return;
+      }
+      const left = Math.max(0, (scroller.scrollWidth - scroller.clientWidth) / 2);
+      const top = mode === "brick"
+        ? Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+        : 0;
+      scroller.scrollTo({ left, top, behavior: "smooth" });
+    }, 60);
     return () => window.clearTimeout(timer);
-  }, [focusNode?.id, mode, layout.height, layout.width]);
+  }, [focusNode?.id, mode, scaledHeight, scaledWidth, nodes.length, edges.length, zoom]);
 
   const topBrickDepth = nodes.reduce((value, node) => Math.max(value, node.depth), 0);
 
@@ -1167,14 +1218,20 @@ function HierarchyStage({
       <div ref={scrollerRef} className={styles.graphScroller} aria-label={`${mode === "tree" ? "Tree" : "Brick"} graph. Scroll vertically and horizontally; swipe on touch devices.`}>
         <div
           className={styles.graphCanvas}
-          style={{ width: layout.width, height: layout.height }}
+          style={{ width: scaledWidth, height: scaledHeight }}
           onClick={(event) => {
             if (event.target === event.currentTarget) onClearFocus();
           }}
         >
           <div
             className={`${styles.graphPlane} ${mode === "brick" ? styles.graphPlaneBrick : styles.graphPlaneTree}`}
-            style={{ width: layout.width, height: layout.height }}
+            style={{
+              width: layout.width,
+              height: layout.height,
+              left: scaledWidth / 2,
+              transform: `translateX(-50%) scale(${zoom})`,
+              transformOrigin: mode === "brick" ? "center bottom" : "center top",
+            }}
             onClick={(event) => {
               if (event.target === event.currentTarget) onClearFocus();
             }}
@@ -1528,13 +1585,6 @@ function KnowledgeNode({
   onBrickFromHere: () => void;
   onDismissMessages: () => void;
 }) {
-  const contextualPrerequisites = explanation?.prerequisites?.length
-    ? explanation.prerequisites
-    : node.prerequisites;
-  const contextualUnlocks = explanation?.whatItUnlocks?.length
-    ? explanation.whatItUnlocks
-    : (node.whatItUnlocks ?? []);
-
   return (
     <article className={`${styles.knowledgeNode} ${selected ? styles.nodeSelected : ""}`}>
       <div className={styles.nodeMeta}>
@@ -1566,14 +1616,7 @@ function KnowledgeNode({
       <details
         className={styles.nodeDetails}
         onToggle={(event) => {
-          if (!event.currentTarget.open) return;
-          if (!explanation) onExplain();
-          // Opening a detail card changes both its width and height. Recenter it
-          // after layout so the graph scroller can expose every edge of the card.
-          const details = event.currentTarget;
-          window.setTimeout(() => {
-            details.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
-          }, 60);
+          if (event.currentTarget.open && !explanation) onExplain();
         }}
       >
         <summary>{explanationLoading ? "Loading detail…" : "Open detail + resources"}</summary>
@@ -1587,26 +1630,16 @@ function KnowledgeNode({
 
           {node.whyItMatters ? <section><h3>Why this node matters</h3><p>{node.whyItMatters}</p></section> : null}
 
-          {contextualPrerequisites.length || contextualUnlocks.length ? (
-            <div className={styles.detailGrid}>
-              {contextualPrerequisites.length ? (
-                <section>
-                  <h3>Useful prerequisites</h3>
-                  <ul>
-                    {contextualPrerequisites.slice(0, 6).map((item) => <li key={item}>{item}</li>)}
-                  </ul>
-                </section>
-              ) : null}
-              {contextualUnlocks.length ? (
-                <section>
-                  <h3>{mode === "tree" ? "What this cut exposes next" : "What this brick enables next"}</h3>
-                  <ul>
-                    {contextualUnlocks.slice(0, 6).map((item) => <li key={item}>{item}</li>)}
-                  </ul>
-                </section>
-              ) : null}
-            </div>
-          ) : null}
+          <div className={styles.detailGrid}>
+            <section>
+              <h3>Prerequisites</h3>
+              {node.prerequisites.length ? <ul>{node.prerequisites.slice(0, 6).map((item) => <li key={item}>{item}</li>)}</ul> : <p>None listed yet.</p>}
+            </section>
+            <section>
+              <h3>{mode === "tree" ? "What this branch reveals" : "What this brick unlocks"}</h3>
+              {node.whatItUnlocks?.length ? <ul>{node.whatItUnlocks.slice(0, 6).map((item) => <li key={item}>{item}</li>)}</ul> : <p>{mode === "tree" ? "Branch this node to cut it one level deeper." : "Construct the next layer to see what becomes reachable."}</p>}
+            </section>
+          </div>
 
           <section>
             <div className={styles.resourceHeader}>

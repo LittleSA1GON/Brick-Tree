@@ -74,6 +74,16 @@ describe("Brick Tree 0.8 interaction shell", () => {
     expect(appSource).not.toContain("Resources are loaded only when you ask for them.");
   });
 
+  it("keeps generated graphs centered and provides explicit whole-graph zoom controls", () => {
+    expect(appSource).toContain("ZoomControls");
+    expect(appSource).toContain("graphZoom");
+    expect(appSource).toContain("scaledWidth");
+    expect(appSource).toContain("scaledHeight");
+    expect(appSource).toContain("(scroller.scrollWidth - scroller.clientWidth) / 2");
+    expect(appSource).toContain('transform: `translateX(-50%) scale(${zoom})`');
+    expect(appStyles).toContain(".zoomControls");
+  });
+
   it("does not load the old React Flow stylesheet into the main application", () => {
     expect(layoutSource).not.toContain("@xyflow/react/dist/style.css");
   });

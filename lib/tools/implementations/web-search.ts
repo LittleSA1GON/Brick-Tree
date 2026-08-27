@@ -6,97 +6,33 @@ import { getEnv } from "@/lib/config/env";
 const InputSchema = z.object({
   query: z.string().min(1).max(300),
   limit: z.number().int().min(1).max(6).default(4),
+  domains: z.array(z.string().min(1).max(120)).max(8).optional(),
 });
 
-const TRUSTED_DOMAINS = [
-  // Universities / education
-  "mit.edu",
-  "stanford.edu",
-  "harvard.edu",
-  "berkeley.edu",
-  "cmu.edu",
-  "caltech.edu",
-  "princeton.edu",
-  "yale.edu",
-  "columbia.edu",
-  "cornell.edu",
-  "ox.ac.uk",
-  "cam.ac.uk",
-  "openstax.org",
-  "khanacademy.org",
-
-  // Government / research / standards institutions
-  "nist.gov",
-  "nasa.gov",
-  "nih.gov",
-  "ncbi.nlm.nih.gov",
-  "cdc.gov",
-  "energy.gov",
-  "nsf.gov",
-  "who.int",
-  "oecd.org",
-  "worldbank.org",
-  "w3.org",
-  "ietf.org",
-
-  // Scholarly publishers / indexes
-  "doi.org",
-  "arxiv.org",
-  "nature.com",
-  "science.org",
-  "acm.org",
-  "ieee.org",
-  "springer.com",
-  "sciencedirect.com",
-  "jstor.org",
-  "plos.org",
-
-  // Official technical documentation
-  "developer.mozilla.org",
-  "docs.python.org",
-  "learn.microsoft.com",
-  "docs.oracle.com",
-  "react.dev",
-  "nextjs.org",
-  "typescriptlang.org",
-  "pytorch.org",
-  "tensorflow.org",
-  "scikit-learn.org",
-  "numpy.org",
-];
-
-function hostnameOf(url: string): string | undefined {
-  try {
-    return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
-  } catch {
-    return undefined;
-  }
-}
-
-function isTrustedInstitutionalUrl(url: string): boolean {
-  const host = hostnameOf(url);
-  if (!host) return false;
-
-  if (
-    host.endsWith(".edu") ||
-    host.endsWith(".gov") ||
-    host.endsWith(".ac.uk") ||
-    host.endsWith(".edu.au") ||
-    host.endsWith(".ac.jp") ||
-    host.endsWith(".ac.nz")
-  ) {
-    return true;
-  }
-
-  return TRUSTED_DOMAINS.some(
-    (domain) => host === domain || host.endsWith(`.${domain}`),
-  );
-}
-
 function sourceLabel(url: string): string {
-  const host = hostnameOf(url);
-  if (!host) return "Institutional source";
-  return host;
+  try {
+    const host = new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+    if (host.endsWith("khanacademy.org")) return "Khan Academy";
+    if (host.endsWith("openstax.org")) return "OpenStax";
+    if (host.endsWith("mit.edu")) return "MIT";
+    if (host.endsWith("stanford.edu")) return "Stanford University";
+    if (host.endsWith("harvard.edu")) return "Harvard University";
+    if (host.endsWith("developer.mozilla.org")) return "MDN Web Docs";
+    if (host.endsWith("docs.python.org")) return "Python Documentation";
+    if (host.endsWith("developers.google.com")) return "Google for Developers";
+    if (host.endsWith("nih.gov")) return "NIH";
+    if (host.endsWith("nasa.gov")) return "NASA";
+    return host;
+  } catch {
+    return "Web source";
+  }
+}
+
+function resultType(url: string): RawSearchResult["type"] {
+  const host = url.toLowerCase();
+  if (host.includes("docs.") || host.includes("developer.mozilla.org") || host.includes("developers.google.com")) return "documentation";
+  if (host.includes(".edu") || host.includes("khanacademy.org") || host.includes("openstax.org")) return "course";
+  return "article";
 }
 
 export const webSearchTool: AgentTool<z.infer<typeof InputSchema>, RawSearchResult[]> = {
@@ -106,40 +42,34 @@ export const webSearchTool: AgentTool<z.infer<typeof InputSchema>, RawSearchResu
     const apiKey = getEnv().TAVILY_API_KEY;
     if (!apiKey) return [];
 
+    const body: Record<string, unknown> = {
+      api_key: apiKey,
+      query: input.query,
+      max_results: input.limit,
+      search_depth: "basic",
+      include_answer: false,
+    };
+    if (input.domains?.length) body.include_domains = input.domains;
+
     const response = await fetch("https://api.tavily.com/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        api_key: apiKey,
-        query: input.query,
-        max_results: Math.min(input.limit * 2, 10),
-        search_depth: "basic",
-        include_answer: false,
-        include_domains: TRUSTED_DOMAINS,
-      }),
+      body: JSON.stringify(body),
       signal: context.signal,
     });
-
-    if (!response.ok) {
-      throw new Error(`Tavily search failed with ${response.status}.`);
-    }
-
+    if (!response.ok) throw new Error(`Tavily search failed with ${response.status}.`);
     const payload = (await response.json()) as {
       results?: Array<{ title?: string; url?: string; content?: string }>;
     };
-
     return (payload.results ?? [])
-      .filter(
-        (item): item is { title: string; url: string; content?: string } =>
-          Boolean(item.title && item.url && isTrustedInstitutionalUrl(item.url)),
-      )
-      .slice(0, input.limit)
+      .filter((item): item is { title: string; url: string; content?: string } => Boolean(item.title && item.url))
+      .filter((item) => !/wikipedia\.org|wikimedia\.org/i.test(item.url))
       .map((item) => ({
         title: item.title,
         url: item.url,
         source: sourceLabel(item.url),
         snippet: item.content,
-        type: "documentation" as const,
+        type: resultType(item.url),
       }));
   },
 };

@@ -44,8 +44,6 @@ type ExplanationResponse = {
   sourceSummary?: string;
   example: string;
   keyTakeaway: string;
-  prerequisites: string[];
-  whatItUnlocks: string[];
   evidence: Array<{ documentId: string; sectionId: string; page?: number; heading?: string }>;
 };
 
@@ -54,8 +52,6 @@ const ExplanationResponseSchema = z.object({
   sourceSummary: z.string().max(2400).optional(),
   example: z.string().min(1).max(1800),
   keyTakeaway: z.string().min(1).max(700),
-  prerequisites: z.array(z.string().min(1).max(160)).max(6).default([]),
-  whatItUnlocks: z.array(z.string().min(1).max(180)).max(6).default([]),
   evidence: z.array(z.object({
     documentId: z.string(),
     sectionId: z.string(),
@@ -1398,6 +1394,7 @@ function safeCandidateUrl(candidate: RawSearchResult): boolean {
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
     const host = parsed.hostname.toLowerCase();
     if (host === "localhost" || host === "::1" || host.endsWith(".local")) return false;
+    if (host.endsWith("wikipedia.org") || host.endsWith("wikimedia.org")) return false;
     const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
     if (!ipv4) return true;
     const [a, b] = ipv4.slice(1).map(Number);
@@ -1405,6 +1402,56 @@ function safeCandidateUrl(candidate: RawSearchResult): boolean {
   } catch {
     return false;
   }
+}
+
+function resourceSubjectDomains(node: ConceptNode, profile?: LearnerProfile): string[] {
+  const text = `${node.title} ${node.shortDescription}`.toLowerCase();
+  const education = (profile?.educationLevel ?? "high-school").toLowerCase();
+  const schoolLearner = ["elementary", "middle-school", "high-school"].includes(education)
+    || ["novice", "beginner"].includes(profile?.knowledgeLevel ?? "beginner");
+
+  if (/algebra|geometry|trigonometry|calculus|statistics|probability|mathematics|equation|function/.test(text)) {
+    return schoolLearner
+      ? ["khanacademy.org", "openstax.org"]
+      : ["ocw.mit.edu", "openstax.org", "khanacademy.org"];
+  }
+  if (/machine learning|neural|regression|classification|artificial intelligence|deep learning/.test(text)) {
+    return schoolLearner
+      ? ["developers.google.com", "khanacademy.org"]
+      : ["cs229.stanford.edu", "developers.google.com", "ocw.mit.edu"];
+  }
+  if (/python|javascript|typescript|programming|software|web development|computer science|algorithm/.test(text)) {
+    return schoolLearner
+      ? ["cs50.harvard.edu", "developer.mozilla.org", "docs.python.org"]
+      : ["ocw.mit.edu", "developer.mozilla.org", "docs.python.org", "cs50.harvard.edu"];
+  }
+  if (/physics|mechanics|electricity|thermodynamics/.test(text)) {
+    return schoolLearner ? ["khanacademy.org", "openstax.org"] : ["ocw.mit.edu", "openstax.org"];
+  }
+  if (/biology|genetics|ecology|cell|chemistry|molecule|reaction/.test(text)) {
+    return ["openstax.org", "khanacademy.org"];
+  }
+  return schoolLearner
+    ? ["khanacademy.org", "openstax.org"]
+    : ["ocw.mit.edu", "openstax.org"];
+}
+
+function isResearchAudience(node: ConceptNode, profile?: LearnerProfile): boolean {
+  const education = (profile?.educationLevel ?? "high-school").toLowerCase();
+  const level = profile?.knowledgeLevel ?? "beginner";
+  const purpose = profile?.purpose ?? "general-learning";
+  const preferred = profile?.preferredResourceTypes ?? [];
+  const explicitlyWantsResearch = purpose === "research"
+    || preferred.some((item) => /paper|research|journal/i.test(item));
+  const introductoryLearner = ["elementary", "middle-school", "high-school"].includes(education)
+    || ["novice", "beginner"].includes(level);
+
+  if (introductoryLearner && !explicitlyWantsResearch) return false;
+
+  return explicitlyWantsResearch
+    || node.difficulty >= 4
+    || ["graduate", "professional"].includes(education)
+    || ["advanced", "expert"].includes(level);
 }
 
 function deterministicResourcePlan(
@@ -1417,29 +1464,52 @@ function deterministicResourcePlan(
   const education = profile?.educationLevel ?? "high-school";
   const purpose = profile?.purpose ?? "general-learning";
   const audience = `${education} ${level}`;
+  const domains = resourceSubjectDomains(node, profile);
+  const researchAudience = isResearchAudience(node, profile);
+
   const queries: ResourceQueryPlan["queries"] = [
     {
-      query: `${node.title} ${audience} research overview`,
-      source: "academic",
-      reason: "Use scholarly publication metadata and DOI-linked papers instead of crowd-edited reference pages.",
+      query: `${node.title} ${audience} ${purpose} learning resource`,
+      source: "institution",
+      reason: "Start with reputable instructional material whose difficulty matches the learner.",
     },
   ];
+
+  if (researchAudience) {
+    queries.push({
+      query: `${node.title} ${purpose === "research" ? "research paper" : "scholarly overview"}`,
+      source: "academic",
+      reason: "The learner or concept is advanced enough for primary or scholarly literature.",
+    });
+  }
+
   if (webSearchAvailable) {
-    const preferenceTerms = preferred || (purpose === "project" ? "official documentation tutorial" : "university course official documentation");
+    const preferenceTerms = preferred || (purpose === "project" ? "official documentation tutorial" : "course tutorial official educational material");
     queries.push({
       query: `${node.title} ${audience} ${preferenceTerms}`,
       source: "web",
-      reason: "Find learner-appropriate explanations from universities, government/research institutions, standards bodies, or official documentation.",
+      domains,
+      reason: "Search only trusted institutional or official domains for material fitted to this learner.",
     });
   }
-  if (node.difficulty >= 4 || purpose === "research" || preferred.includes("paper")) {
-    queries.push({
-      query: `${node.title} recent research methods applications`,
-      source: "academic",
-      reason: "Advanced or research-oriented learners benefit from an additional scholarly search focused on methods and applications.",
-    });
-  }
+
   return { queries };
+}
+
+function resourcePriority(candidate: RawSearchResult, node: ConceptNode, profile?: LearnerProfile): number {
+  const source = candidate.source.toLowerCase();
+  const education = (profile?.educationLevel ?? "high-school").toLowerCase();
+  const level = profile?.knowledgeLevel ?? "beginner";
+  const schoolLearner = ["elementary", "middle-school", "high-school"].includes(education)
+    || ["novice", "beginner"].includes(level);
+  const researchAudience = isResearchAudience(node, profile);
+
+  if (source.includes("khan academy")) return schoolLearner ? 140 : 70;
+  if (source.includes("openstax")) return schoolLearner ? 130 : 100;
+  if (source.includes("mit") || source.includes("stanford") || source.includes("harvard")) return researchAudience ? 125 : 115;
+  if (source.includes("google for developers") || source.includes("python documentation") || source.includes("mdn")) return 120;
+  if (source.includes("crossref")) return researchAudience ? 150 : node.difficulty >= 4 ? 120 : 45;
+  return 80;
 }
 
 export async function findResources(input: {
@@ -1480,15 +1550,17 @@ export async function findResources(input: {
 
   const candidates: RawSearchResult[] = [];
   for (const query of plan.queries.slice(0, 5)) {
-    const tool = query.source === "academic"
-      ? "search_academic_resources"
-      : "search_web";
+    const tool = query.source === "institution"
+      ? "search_institution_resources"
+      : query.source === "academic"
+        ? "search_academic_resources"
+        : "search_web";
 
     try {
       const results = (await runtime.executeTool(
         "resource_agent",
         tool,
-        { query: query.query, limit: 4 },
+        { query: query.query, limit: 4, domains: query.domains },
         trace,
       )) as RawSearchResult[];
       candidates.push(...results);
@@ -1503,36 +1575,15 @@ export async function findResources(input: {
   }
 
   const seen = new Set<string>();
-  const sourcePriority = (source: string): number => {
-    if (source.startsWith("Crossref")) return 5;
-    if (source.endsWith(".edu") || source.endsWith(".gov") || source.includes(".ac.")) return 4;
-    if (source.includes("doi.org") || source.includes("arxiv.org") || source.includes("acm.org") || source.includes("ieee.org")) return 4;
-    return 3;
-  };
-  const uniqueCandidates = candidates
+  const selected = candidates
     .filter(safeCandidateUrl)
     .filter((candidate) => {
       if (seen.has(candidate.url)) return false;
       seen.add(candidate.url);
       return true;
     })
-    .sort((a, b) => sourcePriority(b.source) - sourcePriority(a.source));
-
-  // Keep the resource tray useful for the learner rather than filling all five
-  // slots with papers when an institutional explanation is available. Research
-  // profiles get papers first; other profiles get official/institutional material
-  // first, then papers. Any remaining slots are filled from the verified pool.
-  const papers = uniqueCandidates.filter((candidate) => candidate.type === "paper");
-  const institutional = uniqueCandidates.filter((candidate) => candidate.type !== "paper");
-  const researchFirst = input.learnerProfile?.purpose === "research";
-  const preferred = researchFirst
-    ? [...papers.slice(0, 3), ...institutional.slice(0, 2)]
-    : [...institutional.slice(0, 3), ...papers.slice(0, 2)];
-  const selectedUrls = new Set(preferred.map((candidate) => candidate.url));
-  const selected = [
-    ...preferred,
-    ...uniqueCandidates.filter((candidate) => !selectedUrls.has(candidate.url)),
-  ].slice(0, 5);
+    .sort((a, b) => resourcePriority(b, input.node, input.learnerProfile) - resourcePriority(a, input.node, input.learnerProfile))
+    .slice(0, 5);
 
   const resources: ResourceLink[] = selected.map((candidate) => ({
     title: candidate.title,
@@ -1543,7 +1594,7 @@ export async function findResources(input: {
     verified: true,
   }));
 
-  trace.add("agent_finish", `Resource Agent selected ${resources.length} controlled resource links.`, {
+  trace.add("agent_finish", `Resource Agent selected ${resources.length} audience-matched resource links.`, {
     agent: "resource_agent",
   });
 
@@ -1551,8 +1602,8 @@ export async function findResources(input: {
     data: {
       resources,
       summary: resources.length
-        ? `Found ${resources.length} resource${resources.length === 1 ? "" : "s"} from controlled public/search tools.`
-        : "No verified external resources were available. The knowledge graph remains usable without them.",
+        ? `Found ${resources.length} reputable resource${resources.length === 1 ? "" : "s"} matched to the learner and concept.`
+        : "No suitable external resources were available. The knowledge graph remains usable without them.",
     },
     trace: trace.list(),
     warnings,
@@ -1586,23 +1637,20 @@ export async function explainConcept(input: {
   const result = await provider.generateStructured<ExplanationResponse>({
     system: `You adapt an existing concept explanation to a requested learner level and language style. Preserve the concept's meaning. Do not introduce unsupported URLs.
 
-If source evidence is provided, distinguish "what the source says" from your general educational explanation. In uploaded-only mode, do not make factual claims that cannot be supported by the evidence. Return evidence identifiers only when they appear in the supplied evidence metadata.
-
-Also refresh the node's learning context. Return 0-6 concise prerequisites that are genuinely useful before this concept, and 0-6 concise concepts/capabilities this node directly unlocks. Do not invent filler. If there is no meaningful prerequisite or unlock, return an empty array.`,
+If source evidence is provided, distinguish "what the source says" from your general educational explanation. In uploaded-only mode, do not make factual claims that cannot be supported by the evidence. Return evidence identifiers only when they appear in the supplied evidence metadata.`,
     user: `Concept: ${input.node.title}
 Base description: ${input.node.shortDescription}
 Why it matters: ${input.node.whyItMatters ?? ""}
 Why it is difficult: ${input.node.difficultyExplanation}
 Difficulty factors: ${input.node.difficultyFactors.join(", ")}
-Existing prerequisite hints: ${input.node.prerequisites.join(", ")}
-Existing unlock hints: ${(input.node.whatItUnlocks ?? []).join(", ")}
+Prerequisites: ${input.node.prerequisites.join(", ")}
 Requested explanation level: ${input.level}
 Learner/session profile: ${JSON.stringify(input.learnerProfile ?? {})}
 Source mode: ${sourceMode(input.learnerProfile)}
 Retrieved source evidence: ${JSON.stringify(evidence)}`,
     schema: ExplanationResponseSchema,
     schemaName: "AdaptiveExplanation",
-    schemaHint: "JSON fields: explanation:string, sourceSummary?:string, example:string, keyTakeaway:string, prerequisites:string[], whatItUnlocks:string[], evidence:[{documentId,sectionId,page?,heading?}]. Use empty arrays instead of generic placeholder text.",
+    schemaHint: "JSON fields: explanation:string, sourceSummary?:string, example:string, keyTakeaway:string, evidence:[{documentId,sectionId,page?,heading?}].",
     temperature: 0.25,
   });
   const verifiedExplanationEvidence = verifiedEvidenceReferences(result.data.evidence ?? [], evidence);

@@ -2112,36 +2112,75 @@
   .persistentMap { width: 260px; height: 176px; }
 }
 
-/* 0.8.5 readable edge buffer.
-   The hierarchy layout supplies real canvas padding; these scroll margins make
-   expanded cards recenter cleanly and preserve extra vertical room above/below
-   the focused node instead of pinning it against the viewport edge. */
-.graphScroller {
-  scroll-padding:
-    clamp(180px, 34dvh, 440px)
-    clamp(140px, 26vw, 440px);
+/* 0.8.5 responsive graph zoom. The graph geometry already adapts to the viewport;
+   these controls let the learner further scale the complete node/edge plane without
+   changing semantic positions or clipping the scrollable canvas. */
+.zoomControls {
+  position: fixed;
+  z-index: 42;
+  left: 50%;
+  bottom: var(--edge-y, 18px);
+  display: grid;
+  grid-template-columns: var(--top-ui-h, 48px) minmax(58px, auto) var(--top-ui-h, 48px);
+  height: var(--top-ui-h, 48px);
+  transform: translateX(-50%);
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.11);
+  border-radius: clamp(12px, 1vw, 16px);
+  background: rgba(8,10,9,.9);
+  box-shadow: 0 16px 50px rgba(0,0,0,.34);
+  backdrop-filter: blur(18px);
 }
 
-.graphNodeWrapper {
-  scroll-margin-block: clamp(180px, 32dvh, 420px);
-  scroll-margin-inline: clamp(120px, 22vw, 380px);
+.zoomControls button {
+  min-width: 0;
+  border: 0;
+  border-right: 1px solid rgba(255,255,255,.08);
+  padding: 0 clamp(8px, .8vw, 13px);
+  color: rgba(255,255,255,.78);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: clamp(16px, 1.15vw + .25vh, 22px);
+  font-weight: 800;
+  transition: color .18s ease, background .18s ease;
 }
 
-.graphNodeWrapper .knowledgeNode,
-.graphNodeWrapper .knowledgeNode:has(.nodeDetails[open]) {
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable both-edges;
+.zoomControls button:last-child { border-right: 0; }
+.zoomControls button:hover:not(:disabled) {
+  color: white;
+  background: color-mix(in srgb, var(--accent) 12%, rgba(255,255,255,.025));
+}
+.zoomControls button:disabled { opacity: .28; cursor: default; }
+.zoomControls .zoomValue {
+  font-size: clamp(9px, .55vw + .16vh, 12px);
+  letter-spacing: .04em;
+  color: var(--accent-soft);
+}
+
+/* The graph plane is scaled as one unit, so nodes, edges, destination markers and
+   spacing all respond together instead of changing only text size. */
+.graphPlane {
+  will-change: transform;
+  transition: transform .28s cubic-bezier(.2,.78,.18,1);
 }
 
 @media (max-width: 700px) {
-  .graphScroller {
-    scroll-padding:
-      clamp(130px, 26dvh, 260px)
-      clamp(70px, 18vw, 150px);
+  .zoomControls {
+    bottom: calc(var(--edge-y, 8px) + clamp(98px, 15vh, 122px));
+    grid-template-columns: 40px 52px 40px;
+    height: 40px;
   }
+  .zoomControls button { padding: 0 6px; }
+}
 
-  .graphNodeWrapper {
-    scroll-margin-block: clamp(130px, 25dvh, 240px);
-    scroll-margin-inline: clamp(60px, 16vw, 120px);
+@media (max-height: 560px) and (min-width: 701px) {
+  .zoomControls {
+    right: var(--edge-x, 12px);
+    left: auto;
+    bottom: var(--edge-y, 10px);
+    transform: none;
+    grid-template-columns: 38px 50px 38px;
+    height: 38px;
   }
 }
