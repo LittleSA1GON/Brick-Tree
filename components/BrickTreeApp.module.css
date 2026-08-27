@@ -1709,3 +1709,46 @@
   min-width: 100%;
   min-height: 100%;
 }
+
+/* 0.8.3 buffered hierarchy viewport.
+   Tree is anchored to the top of its scrollable world.
+   Brick is anchored to the bottom so Height 0 foundations begin below higher layers.
+   The hierarchy layout itself supplies generous x/y padding, which creates real scrollable
+   room around edge nodes instead of allowing expanded cards to be clipped by the viewport. */
+.graphScroller {
+  scroll-padding: 28vh 22vw;
+}
+
+.graphCanvas {
+  position: relative;
+  min-width: 100%;
+  min-height: 100%;
+  margin: 0 auto;
+}
+
+.graphPlane {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.graphPlaneTree {
+  top: 0;
+}
+
+.graphPlaneBrick {
+  bottom: 0;
+}
+
+/* Keep a visible navigation gutter even when a graph is wider/taller than the screen. */
+@media (max-width: 1000px) {
+  .graphScroller {
+    scroll-padding: 24vh 18vw;
+  }
+}
+
+@media (max-width: 640px) {
+  .graphScroller {
+    scroll-padding: 20vh 14vw;
+  }
+}
