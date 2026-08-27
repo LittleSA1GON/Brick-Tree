@@ -714,15 +714,12 @@
 .detailBody li { color: rgba(255,255,255,.65); line-height: 1.56; font-size: 13px; }
 .detailBody p { margin: 0; }
 .detailBody ul { margin: 0; padding-left: 19px; }
-.detailGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
 .example { margin-top: 13px; padding: 14px; border: 1px solid rgba(255,255,255,.09); border-radius: 13px; background: rgba(255,255,255,.025); }
 .example strong { display: block; margin-bottom: 6px; font-size: 11px; color: rgba(255,255,255,.82); }
 .takeaway { margin-top: 12px; color: rgba(255,255,255,.85); font-weight: 750; font-size: 13px; }
 .connectionChips { display: flex; flex-wrap: wrap; gap: 7px; }
 .connectionChips span { padding: 7px 9px; border: 1px solid rgba(255,255,255,.09); border-radius: 999px; color: rgba(255,255,255,.55); font-size: 11px; }
 
-.resourceHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.resourceHeader button,
 .secondaryActions button {
   border: 1px solid rgba(255,255,255,.12);
   border-radius: 999px;
@@ -796,7 +793,6 @@
   .axisRail { left: 17px; }
   .homeButton { left: 14px; }
   .mapButton { right: 14px; }
-  .detailGrid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 640px) {
@@ -1532,13 +1528,6 @@
 .graphNodeWrapper .knowledgeNode h2 { font-size: clamp(22px, 2vw, 30px); }
 .graphNodeWrapper .nodeBrief { font-size: 13px; line-height: 1.45; }
 
-.resourceHeader span {
-  color: var(--accent-soft);
-  font-size: 9px;
-  font-weight: 900;
-  letter-spacing: .09em;
-  text-transform: uppercase;
-}
 
 /* Persistent overview: always visible; opening it reveals the detailed workspace map. */
 .persistentMap {
@@ -2614,3 +2603,16 @@
   border-color: color-mix(in srgb, var(--accent) 62%, white 8%);
   background-color: #1b1f1d;
 }
+
+.resourceEmpty { display: grid; gap: 8px; justify-items: start; }
+.resourceEmpty p { margin: 0; }
+.resourceEmpty button {
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 999px;
+  padding: 7px 10px;
+  color: rgba(255,255,255,.7);
+  background: rgba(255,255,255,.025);
+  cursor: pointer;
+  font-size: 10px;
+}
+.resourceEmpty button:hover { border-color: color-mix(in srgb, var(--accent) 32%, rgba(255,255,255,.12)); }

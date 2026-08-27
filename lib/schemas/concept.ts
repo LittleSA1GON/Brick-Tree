@@ -152,8 +152,8 @@ export type DifficultyAssessment = z.infer<typeof DifficultyAssessmentSchema>;
 
 /**
  * Initial Tree generation is intentionally compact. The graph only needs enough
- * information to render a useful adjacent layer. Rich explanations and resources
- * are loaded lazily when a learner opens a node. Defaults make JSON-object mode
+ * information to render a useful adjacent layer. Explanations stay lazy while
+ * resources are hydrated separately in a compact batch. Defaults make JSON-object mode
  * tolerant of omitted secondary fields without inventing missing child concepts.
  */
 export const ConceptChildProposalSchema = z.object({

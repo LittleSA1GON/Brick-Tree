@@ -72,9 +72,14 @@ describe("Brick Tree 0.8 interaction shell", () => {
     expect(pathAgent).toContain("levelNarrative.previousLevelComparison");
   });
 
-  it("loads resources automatically for the focused node", () => {
-    expect(appSource).toContain("resourceAttemptedRef");
-    expect(appSource).toContain("Loading resources for this node");
+  it("hydrates adaptive resources for every generated layer in one batch request", () => {
+    expect(appSource).toContain("hydrateResources");
+    expect(appSource).toContain("pending.map(resourceNodeContext)");
+    expect(appSource).toContain("void hydrateResources(initialNodes, nextProfile)");
+    expect(appSource).toContain("void hydrateResources([parent, ...incomingNodes], nextProfile)");
+    expect(appSource).toContain("void hydrateResources(\n      mapNodes,");
+    expect(appSource).toContain("Loading adaptive resources for this node");
+    expect(appSource).not.toContain('node.resources.length ? "Ready" : "Unavailable"');
     expect(appSource).not.toContain("Resources are loaded only when you ask for them.");
   });
 
@@ -102,11 +107,13 @@ describe("Brick Tree 0.8 interaction shell", () => {
     expect(appStyles).toContain(".setupAdvanced :global(.profile-grid select)");
   });
 
-  it("replaces static node-detail placeholders with adaptive prerequisites and unlocks", () => {
-    expect(appSource).toContain("detailPrerequisites");
-    expect(appSource).toContain("detailUnlocks");
-    expect(appSource).not.toContain("None listed yet.");
-    expect(appSource).not.toContain("Branch this node to cut it one level deeper.");
+  it("removes prerequisite and unlock filler from both Tree and Brick node detail", () => {
+    expect(appSource).not.toContain("detailPrerequisites");
+    expect(appSource).not.toContain("detailUnlocks");
+    expect(appSource).not.toContain("<h3>Prerequisites</h3>");
+    expect(appSource).not.toContain("What this branch reveals");
+    expect(appSource).not.toContain("What this brick unlocks");
+    expect(appSource).not.toContain("No additional prerequisite was identified");
   });
 
   it("rechecks adaptive detail when the learner level changes without refetching the same level", () => {

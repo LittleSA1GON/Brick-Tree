@@ -1,11 +1,10 @@
 import type { AgentSpec } from "@/lib/agents/spec";
-import { ResourceSelectionSchema, type ResourceCandidate, type ResourceSelection } from "@/lib/schemas/resources";
-import type { ConceptNode } from "@/lib/schemas/concept";
+import { ResourceSelectionSchema, type ResourceCandidate, type ResourceNodeContext, type ResourceSelection } from "@/lib/schemas/resources";
 import type { LearnerProfile } from "@/lib/schemas/learning-path";
 import type { ResourceStrategy } from "@/lib/agents/resource-strategy";
 
 export type ResourceSelectionInput = {
-  node: ConceptNode;
+  node: ResourceNodeContext;
   learnerProfile?: LearnerProfile;
   candidates: ResourceCandidate[];
   strategy: ResourceStrategy;
@@ -39,7 +38,18 @@ Return up to five candidate IDs in strongest learner-specific order, with concis
   schemaName: "ResourceSelection",
   schemaHint: `JSON fields: selected:[{candidateId:string,reason:string}] (1-5 items, candidateId MUST be copied from supplied candidates), summary:string. Do not return URLs.`,
   buildUserPrompt(input) {
-    const profile = input.learnerProfile ?? {};
+    const sourceProfile = input.learnerProfile;
+    const profile = sourceProfile ? {
+      educationLevel: sourceProfile.educationLevel,
+      knowledgeLevel: sourceProfile.knowledgeLevel,
+      purpose: sourceProfile.purpose,
+      exploreBias: sourceProfile.exploreBias,
+      depthPreference: sourceProfile.depthPreference,
+      languageStyle: sourceProfile.languageStyle,
+      preferredResourceTypes: sourceProfile.preferredResourceTypes?.slice(0, 6),
+      preferredExamples: sourceProfile.preferredExamples?.slice(0, 4),
+      goal: sourceProfile.learningGoal ?? sourceProfile.goal,
+    } : {};
     const candidates = input.candidates.map((candidate) => ({
       candidateId: candidate.candidateId,
       title: candidate.title,

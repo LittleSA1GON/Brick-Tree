@@ -1,4 +1,5 @@
-import type { ConceptNode, ResourceLink } from "@/lib/schemas/concept";
+import type { ResourceLink } from "@/lib/schemas/concept";
+import type { ResourceNodeContext } from "@/lib/schemas/resources";
 import type { LearnerProfile } from "@/lib/schemas/learning-path";
 
 export type ResourceType = ResourceLink["type"];
@@ -33,7 +34,7 @@ function preferenceTypes(values: string[] = []): Set<ResourceType> {
   return result;
 }
 
-function nodeText(node: ConceptNode): string {
+function nodeText(node: ResourceNodeContext): string {
   return [
     node.title,
     node.shortDescription,
@@ -45,7 +46,7 @@ function nodeText(node: ConceptNode): string {
   ].join(" ").toLowerCase();
 }
 
-export function buildResourceStrategy(node: ConceptNode, profile?: LearnerProfile): ResourceStrategy {
+export function buildResourceStrategy(node: ResourceNodeContext, profile?: LearnerProfile): ResourceStrategy {
   const purpose = profile?.purpose ?? "general-learning";
   const knowledge = profile?.knowledgeLevel ?? "beginner";
   const depth = profile?.depthPreference ?? "balanced";

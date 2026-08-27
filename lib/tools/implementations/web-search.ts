@@ -118,37 +118,57 @@ async function searchBrave(query: string, limit: number, signal?: AbortSignal): 
     }));
 }
 
+function queryHash(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
+  return Math.abs(hash);
+}
+
+function cleanResults(results: RawSearchResult[], limit: number): RawSearchResult[] {
+  const seen = new Set<string>();
+  return results
+    .filter(safeResult)
+    .filter((item) => {
+      const key = item.url.replace(/\/$/, "").toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => (b.searchScore ?? 0.5) - (a.searchScore ?? 0.5))
+    .slice(0, limit);
+}
+
 export const webSearchTool: AgentTool<z.infer<typeof InputSchema>, RawSearchResult[]> = {
   name: "search_web",
   inputSchema: InputSchema,
   async execute(input, context) {
     const env = getEnv();
-    const configured = [Boolean(env.TAVILY_API_KEY), Boolean(env.BRAVE_SEARCH_API_KEY)].filter(Boolean).length;
-    if (!configured) return [];
+    const providers: Array<{ name: string; run: () => Promise<RawSearchResult[]> }> = [];
+    if (env.TAVILY_API_KEY) providers.push({ name: "Tavily", run: () => searchTavily(input.query, input.limit, context.signal) });
+    if (env.BRAVE_SEARCH_API_KEY) providers.push({ name: "Brave Search", run: () => searchBrave(input.query, input.limit, context.signal) });
+    if (!providers.length) return [];
 
-    const settled = await Promise.allSettled([
-      searchTavily(input.query, input.limit, context.signal),
-      searchBrave(input.query, input.limit, context.signal),
-    ]);
+    // Rotate the primary provider by query so the system stays source-neutral while
+    // using one search API in the normal case. Only fall back when the first source
+    // errors or returns too few usable candidates.
+    const offset = queryHash(input.query) % providers.length;
+    const ordered = [...providers.slice(offset), ...providers.slice(0, offset)];
+    const combined: RawSearchResult[] = [];
+    const errors: string[] = [];
+    const enough = Math.min(3, input.limit);
 
-    const results = settled.flatMap((item) => item.status === "fulfilled" ? item.value : []);
-    if (!results.length && settled.some((item) => item.status === "rejected")) {
-      const messages = settled
-        .filter((item): item is PromiseRejectedResult => item.status === "rejected")
-        .map((item) => item.reason instanceof Error ? item.reason.message : String(item.reason));
-      throw new Error(`Configured web searches failed: ${messages.join(" | ")}`);
+    for (const provider of ordered) {
+      try {
+        combined.push(...await provider.run());
+        const cleaned = cleanResults(combined, input.limit);
+        if (cleaned.length >= enough) return cleaned;
+      } catch (error) {
+        errors.push(`${provider.name}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
 
-    const seen = new Set<string>();
-    return results
-      .filter(safeResult)
-      .filter((item) => {
-        const key = item.url.replace(/\/$/, "").toLowerCase();
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
-      .sort((a, b) => (b.searchScore ?? 0.5) - (a.searchScore ?? 0.5))
-      .slice(0, input.limit * 2);
+    const cleaned = cleanResults(combined, input.limit);
+    if (!cleaned.length && errors.length) throw new Error(`Configured web searches failed: ${errors.join(" | ")}`);
+    return cleaned;
   },
 };

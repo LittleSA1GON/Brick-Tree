@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   discoverLearningPath: vi.fn(),
   branchFromConcept: vi.fn(),
   explainConcept: vi.fn(),
-  findResources: vi.fn(),
+  findResourcesBatch: vi.fn(),
 }));
 
 vi.mock("@/lib/agents/orchestrator", () => ({
@@ -18,6 +18,7 @@ describe("POST /api/agent", () => {
     vi.clearAllMocks();
     mocks.navigateTree.mockResolvedValue({ data: { marker: "tree" }, trace: [], warnings: [] });
     mocks.discoverLearningPath.mockResolvedValue({ data: { marker: "brick" }, trace: [], warnings: [] });
+    mocks.findResourcesBatch.mockResolvedValue({ data: { items: [] }, trace: [], warnings: [] });
   });
 
   it("rejects invalid requests before running an agent", async () => {
@@ -135,6 +136,42 @@ describe("POST /api/agent", () => {
     const payload = await response.json();
     expect(payload.error.code).toBe("provider_rate_limited");
     expect(payload.error.message).not.toContain("API_KEY");
+  });
+
+
+  it("routes one compact batch resource request for multiple generated nodes", async () => {
+    const { POST } = await import("@/app/api/agent/route");
+    const response = await POST(new Request("http://localhost/api/agent", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "resources",
+        nodes: [
+          {
+            id: "node-a",
+            title: "Derivatives",
+            shortDescription: "Rates of change.",
+            axis: "depth",
+            difficulty: 3,
+            difficultyLabel: "Intermediate",
+            difficultyExplanation: "Requires algebra and function reasoning."
+          },
+          {
+            id: "node-b",
+            title: "Integrals",
+            shortDescription: "Accumulation of quantities.",
+            axis: "depth",
+            difficulty: 3,
+            difficultyLabel: "Intermediate",
+            difficultyExplanation: "Requires algebra and function reasoning."
+          }
+        ]
+      }),
+    }));
+    expect(response.status).toBe(200);
+    expect(mocks.findResourcesBatch).toHaveBeenCalledWith(expect.objectContaining({
+      nodes: expect.arrayContaining([expect.objectContaining({ id: "node-a" }), expect.objectContaining({ id: "node-b" })]),
+    }));
   });
 
 });

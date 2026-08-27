@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  DifficultyLabelSchema,
+  DifficultyScoreSchema,
+  GraphAxisSchema,
+} from "./concept";
 
 export const ResourceSourceSchema = z.enum(["academic", "web"]);
 
@@ -12,9 +17,29 @@ export const ResourceQueryPlanSchema = z.object({
       }),
     )
     .min(0)
-    .max(6),
+    .max(2),
 });
 export type ResourceQueryPlan = z.infer<typeof ResourceQueryPlanSchema>;
+
+/**
+ * Resource lookup intentionally receives only fields that can change retrieval
+ * or ranking. Graph topology, provenance, cached resources, and verbose node
+ * metadata stay out of the request payload.
+ */
+export const ResourceNodeContextSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1).max(300),
+  shortDescription: z.string().min(1).max(420),
+  axis: GraphAxisSchema,
+  difficulty: DifficultyScoreSchema,
+  difficultyLabel: DifficultyLabelSchema,
+  difficultyExplanation: z.string().min(1).max(1000),
+  difficultyFactors: z.array(z.string().min(1).max(160)).max(8).default([]),
+  learningOutcomes: z.array(z.string().min(1).max(160)).max(12).default([]),
+  applications: z.array(z.string().min(1).max(160)).max(12).default([]),
+  examples: z.array(z.string().min(1).max(180)).max(10).default([]),
+});
+export type ResourceNodeContext = z.infer<typeof ResourceNodeContextSchema>;
 
 export const RawSearchResultSchema = z.object({
   title: z.string(),

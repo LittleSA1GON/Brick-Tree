@@ -10,11 +10,12 @@ import {
 } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { ConceptEdge, ConceptNode, GraphLevelDescriptor, ResourceLink } from "@/lib/schemas/concept";
+import type { ResourceNodeContext } from "@/lib/schemas/resources";
 import type { ExtractedDocument } from "@/lib/schemas/documents";
 import type { LearnerProfile as LearnerProfileType, LearningPathProposal } from "@/lib/schemas/learning-path";
 import type { BrickIntent, LearningTraversal, TreeIntent } from "@/lib/schemas/session";
 import type { PedagogyValidation } from "@/lib/schemas/validation";
-import type { ExplanationLevel } from "@/lib/schemas/api";
+import type { AdaptiveExplanation, ExplanationLevel, ExplanationNodeContext } from "@/lib/schemas/api";
 import type { AgentTraceEvent } from "@/lib/observability/trace";
 import { callAgent } from "@/lib/utils/api-client";
 import { graphContextFromState } from "@/lib/graph/graph-utils";
@@ -24,7 +25,6 @@ import {
   mergeGraphPatch,
   traversalRelationships,
 } from "@/lib/graph/client-state";
-import type { AdaptiveExplanation } from "@/components/node/NodeDetailPanel";
 import { LearnerProfile } from "@/components/learning/LearnerProfile";
 import { DocumentSources } from "@/components/learning/DocumentSources";
 import { SessionTransfer } from "@/components/session/SessionTransfer";
@@ -65,7 +65,7 @@ type BrickData = {
   validation: PedagogyValidation;
 };
 
-type ResourceData = { resources: ResourceLink[]; summary: string };
+type ResourceBatchData = { items: Array<{ nodeId: string; resources: ResourceLink[] }> };
 
 type WorkspaceSnapshot = {
   id: string;
@@ -146,6 +146,81 @@ function migrateNode(node: ConceptNode): ConceptNode {
   };
 }
 
+function explanationNodeContext(node: ConceptNode): ExplanationNodeContext {
+  return {
+    id: node.id,
+    title: node.title,
+    shortDescription: node.shortDescription,
+    whyItMatters: node.whyItMatters,
+    difficultyExplanation: node.difficultyExplanation,
+    difficultyFactors: node.difficultyFactors,
+  };
+}
+
+function explanationLearnerProfile(profile: LearnerProfileType): LearnerProfileType {
+  return {
+    educationLevel: profile.educationLevel,
+    exploreBias: profile.exploreBias,
+    existingKnowledge: profile.existingKnowledge.slice(0, 12),
+    sourceMode: profile.sourceMode,
+    sourceDocumentIds: profile.sourceDocumentIds,
+    knowledgeLevel: profile.knowledgeLevel,
+    languageStyle: profile.languageStyle,
+    depthPreference: profile.depthPreference,
+    purpose: profile.purpose,
+    preferredExamples: profile.preferredExamples?.slice(0, 4),
+    courseContext: profile.courseContext?.slice(0, 1200),
+    learningGoal: profile.learningGoal ?? profile.goal,
+  };
+}
+
+function resourceNodeContext(node: ConceptNode): ResourceNodeContext {
+  return {
+    id: node.id,
+    title: node.title,
+    shortDescription: node.shortDescription,
+    axis: node.level.axis,
+    difficulty: node.difficulty,
+    difficultyLabel: node.difficultyLabel,
+    difficultyExplanation: node.difficultyExplanation,
+    difficultyFactors: node.difficultyFactors,
+    learningOutcomes: node.learningOutcomes,
+    applications: node.applications,
+    examples: node.examples,
+  };
+}
+
+function resourceLearnerProfile(profile: LearnerProfileType): LearnerProfileType {
+  return {
+    educationLevel: profile.educationLevel,
+    exploreBias: profile.exploreBias,
+    existingKnowledge: [],
+    sourceMode: "general",
+    sourceDocumentIds: [],
+    knowledgeLevel: profile.knowledgeLevel,
+    languageStyle: profile.languageStyle,
+    depthPreference: profile.depthPreference,
+    purpose: profile.purpose,
+    preferredResourceTypes: profile.preferredResourceTypes?.slice(0, 6),
+    preferredExamples: profile.preferredExamples?.slice(0, 4),
+    learningGoal: profile.learningGoal ?? profile.goal,
+  };
+}
+
+function resourceProfileFingerprint(profile: LearnerProfileType): string {
+  return JSON.stringify({
+    educationLevel: profile.educationLevel,
+    knowledgeLevel: profile.knowledgeLevel,
+    purpose: profile.purpose,
+    exploreBias: profile.exploreBias,
+    depthPreference: profile.depthPreference,
+    languageStyle: profile.languageStyle,
+    preferredResourceTypes: (profile.preferredResourceTypes ?? []).slice(0, 6).map((value) => value.toLowerCase()).sort(),
+    preferredExamples: (profile.preferredExamples ?? []).slice(0, 4).map((value) => value.toLowerCase()).sort(),
+    goal: (profile.learningGoal ?? profile.goal ?? "").slice(0, 240).toLowerCase(),
+  });
+}
+
 function explanationLevel(profile: LearnerProfileType): ExplanationLevel {
   const level = profile.knowledgeLevel ?? "beginner";
   return level === "novice" ? "simple" : level;
@@ -195,15 +270,18 @@ export function BrickTreeApp() {
   const [error, setError] = useState<string>();
   const [busyLabel, setBusyLabel] = useState<string>();
   const [loadingNodeId, setLoadingNodeId] = useState<string>();
-  const [resourceLoadingNodeId, setResourceLoadingNodeId] = useState<string>();
+  const [resourceLoadingNodeIds, setResourceLoadingNodeIds] = useState<Set<string>>(new Set());
   const [explanationLoadingNodeId, setExplanationLoadingNodeId] = useState<string>();
   const [explanations, setExplanations] = useState<Record<string, AdaptiveExplanation>>({});
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [graphZoom, setGraphZoom] = useState(1);
   const requestRef = useRef<AbortController | null>(null);
   const resourceAttemptedRef = useRef<Set<string>>(new Set());
+  const resourceContextRef = useRef<Map<string, string>>(new Map());
+  const activeWorkspaceIdRef = useRef<string | undefined>(undefined);
 
   useEffect(() => () => requestRef.current?.abort(), []);
+  useEffect(() => { activeWorkspaceIdRef.current = activeWorkspaceId; }, [activeWorkspaceId]);
 
   useEffect(() => {
     const known = new Set(parseKnownConcepts(knownInput).map(normalizeConceptTitle));
@@ -279,6 +357,57 @@ export function BrickTreeApp() {
       sourceDocumentIds: (profile.sourceDocumentIds ?? []).filter((id) => availableDocumentIds.has(id)),
     };
   }, [profile, knownInput, goal, documents]);
+
+  const hydrateResources = useCallback(async (candidateNodes: ConceptNode[], learner: LearnerProfileType, workspaceId = activeWorkspaceId, force = false) => {
+    const workspaceKey = workspaceId ?? "workspace";
+    const profileKey = resourceProfileFingerprint(learner);
+    const pending = candidateNodes.filter((node) => {
+      if (!node.parentId && node.title === "Your Foundations") return false;
+      if (force) return true;
+      const nodeKey = `${workspaceKey}:${node.id}`;
+      const hydratedContext = resourceContextRef.current.get(nodeKey);
+      if (node.resources.length && !hydratedContext) {
+        // Imported/current resources are assumed to match the profile active when
+        // first seen. A later relevant learner-profile change will refresh them.
+        resourceContextRef.current.set(nodeKey, profileKey);
+        return false;
+      }
+      if (node.resources.length && hydratedContext === profileKey) return false;
+      return !resourceAttemptedRef.current.has(`${nodeKey}:${profileKey}`);
+    }).slice(0, 20);
+    if (!pending.length) return;
+
+    for (const node of pending) resourceAttemptedRef.current.add(`${workspaceKey}:${node.id}:${profileKey}`);
+    const pendingIds = new Set(pending.map((node) => node.id));
+    setResourceLoadingNodeIds((current) => new Set([...current, ...pendingIds]));
+    try {
+      const response = await callAgent<ResourceBatchData>({
+        action: "resources",
+        nodes: pending.map(resourceNodeContext),
+        learnerProfile: resourceLearnerProfile(learner),
+      });
+      if (!response.data) throw new Error("No resources returned.");
+      if ((activeWorkspaceIdRef.current ?? "workspace") !== workspaceKey) return;
+
+      const byId = new Map(response.data.items.map((item) => [item.nodeId, item.resources]));
+      for (const node of pending) {
+        if (byId.has(node.id)) resourceContextRef.current.set(`${workspaceKey}:${node.id}`, profileKey);
+      }
+      setNodes((current) => current.map((node) => byId.has(node.id) ? { ...node, resources: byId.get(node.id)! } : node));
+      setTrace((current) => [...current, ...(response.trace as AgentTraceEvent[])].slice(-100));
+      if (response.warnings.length) setWarnings((current) => [...new Set([...current, ...response.warnings])].slice(0, 10));
+    } catch (requestError) {
+      if ((activeWorkspaceIdRef.current ?? "workspace") === workspaceKey) {
+        setWarnings((current) => [...new Set([...current, `Resource loading can be retried: ${(requestError as Error).message}`])].slice(0, 10));
+      }
+    } finally {
+      setResourceLoadingNodeIds((current) => {
+        const next = new Set(current);
+        for (const id of pendingIds) next.delete(id);
+        return next;
+      });
+    }
+  }, [activeWorkspaceId]);
 
   const beginRequest = useCallback((label: string) => {
     requestRef.current?.abort();
@@ -418,7 +547,9 @@ export function BrickTreeApp() {
         const root = response.data?.root ?? response.data?.parent;
         if (!response.data || !root) throw new Error("Brick Tree returned no concept map.");
         const migratedRoot = migrateNode(root);
-        setNodes([migratedRoot, ...response.data.nodes.map(migrateNode)]);
+        const initialNodes = [migratedRoot, ...response.data.nodes.map(migrateNode)];
+        setNodes(initialNodes);
+        void hydrateResources(initialNodes, nextProfile);
         setEdges(response.data.edges);
         setLevels(uniqueLevels([root.level, response.data.level]));
         setExpandedNodeIds(new Set([root.id]));
@@ -442,7 +573,9 @@ export function BrickTreeApp() {
         }, controller.signal);
         if (!response.data?.root) throw new Error("Brick Tree returned no learning path.");
         const root = migrateNode(response.data.root);
-        setNodes([root, ...response.data.nodes.map(migrateNode)]);
+        const initialNodes = [root, ...response.data.nodes.map(migrateNode)];
+        setNodes(initialNodes);
+        void hydrateResources(initialNodes, nextProfile);
         setEdges(response.data.edges);
         setLevels(uniqueLevels([root.level, response.data.level]));
         setExpandedNodeIds(new Set([root.id]));
@@ -499,7 +632,7 @@ export function BrickTreeApp() {
       const response = await callAgent<TreeData | BrickData>({
         action: "navigate",
         traversal: nextTraversal,
-        node,
+        node: { ...node, resources: [], detailedExplanation: undefined },
         graphContext: graphContextFromState(nodes, levels, nodeId),
         goal: nextTraversal.mode === "brick" && nextTraversal.intent === "destination" ? goal.trim() || undefined : undefined,
         learnerProfile: nextProfile,
@@ -509,8 +642,10 @@ export function BrickTreeApp() {
 
       const data = response.data;
       const parent = migrateNode(("parent" in data && data.parent) ? data.parent : node);
-      const patch = mergeGraphPatch(nodes, edges, parent, data.nodes.map(migrateNode), data.edges);
+      const incomingNodes = data.nodes.map(migrateNode);
+      const patch = mergeGraphPatch(nodes, edges, parent, incomingNodes, data.edges);
       setNodes(patch.nodes);
+      void hydrateResources([parent, ...incomingNodes], nextProfile);
       setEdges(patch.edges);
       setLevels((current) => uniqueLevels([...current, data.level]));
       setExpandedNodeIds((current) => new Set([...current, nodeId]));
@@ -524,7 +659,7 @@ export function BrickTreeApp() {
       setLoadingNodeId(undefined);
       endRequest();
     }
-  }, [nodes, edges, levels, goal, agentDocuments, beginRequest, endRequest, hasGeneratedFor, syncedProfile]);
+  }, [nodes, edges, levels, goal, agentDocuments, beginRequest, endRequest, hasGeneratedFor, syncedProfile, hydrateResources]);
 
   const expandNode = useCallback(
     (nodeId: string) => expandNodeWithTraversal(nodeId, traversal),
@@ -539,19 +674,14 @@ export function BrickTreeApp() {
     try {
       const response = await callAgent<AdaptiveExplanation>({
         action: "explain",
-        node,
+        node: explanationNodeContext(node),
         level,
-        learnerProfile: syncedProfile(undefined, { includeGoal: mode === "brick" && brickIntent === "destination" }),
+        learnerProfile: explanationLearnerProfile(syncedProfile(undefined, { includeGoal: mode === "brick" && brickIntent === "destination" })),
         documents: agentDocuments,
       });
       if (!response.data) throw new Error("No explanation returned.");
       const adapted = { ...response.data, level } satisfies AdaptiveExplanation;
       setExplanations((current) => ({ ...current, [node.id]: adapted }));
-      setNodes((current) => current.map((item) => item.id === nodeId ? {
-        ...item,
-        prerequisites: adapted.prerequisites?.length ? adapted.prerequisites : item.prerequisites,
-        whatItUnlocks: adapted.whatItUnlocks?.length ? adapted.whatItUnlocks : item.whatItUnlocks,
-      } : item));
       setTrace((current) => [...current, ...(response.trace as AgentTraceEvent[])].slice(-100));
     } catch (requestError) {
       setError((requestError as Error).message);
@@ -560,39 +690,27 @@ export function BrickTreeApp() {
     }
   }
 
-  async function findResources(nodeId: string) {
+  const retryNodeResources = useCallback((nodeId: string) => {
     const node = nodes.find((item) => item.id === nodeId);
     if (!node) return;
-    setResourceLoadingNodeId(nodeId);
-    setError(undefined);
-    try {
-      const response = await callAgent<ResourceData>({
-        action: "resources",
-        node,
-        learnerProfile: syncedProfile(undefined, { includeGoal: mode === "brick" && brickIntent === "destination" }),
-        documents: agentDocuments,
-      });
-      if (!response.data) throw new Error("No resources returned.");
-      setNodes((current) => current.map((item) => item.id === nodeId ? { ...item, resources: response.data!.resources } : item));
-      setTrace((current) => [...current, ...(response.trace as AgentTraceEvent[])].slice(-100));
-      setWarnings(response.warnings);
-    } catch (requestError) {
-      resourceAttemptedRef.current.delete(`${activeWorkspaceId ?? "workspace"}:${nodeId}`);
-      setError((requestError as Error).message);
-    } finally {
-      setResourceLoadingNodeId(undefined);
-    }
-  }
+    void hydrateResources(
+      [node],
+      syncedProfile(undefined, { includeGoal: mode === "brick" && brickIntent === "destination" }),
+      activeWorkspaceId,
+      true,
+    );
+  }, [nodes, hydrateResources, syncedProfile, mode, brickIntent, activeWorkspaceId]);
 
   useEffect(() => {
-    if (!focusNode || focusNode.resources.length || resourceLoadingNodeId === focusNode.id) return;
-    const key = `${activeWorkspaceId ?? "workspace"}:${focusNode.id}`;
-    if (resourceAttemptedRef.current.has(key)) return;
-    resourceAttemptedRef.current.add(key);
-    void findResources(focusNode.id);
-    // Resource discovery is intentionally attempted once per focused node/workspace.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeWorkspaceId, focusNode?.id, focusNode?.resources.length]);
+    if (!mapNodes.length) return;
+    // Generation starts hydration immediately. This pass also covers imported or
+    // older workspaces so every visible node gets one adaptive resource attempt.
+    // resourceAttemptedRef prevents duplicate calls for nodes already requested.
+    void hydrateResources(
+      mapNodes,
+      syncedProfile(undefined, { includeGoal: mode === "brick" && brickIntent === "destination" }),
+    );
+  }, [mapNodes, hydrateResources, syncedProfile, mode, brickIntent]);
 
   function selectNode(nodeId: string, loadExplanation = false) {
     setSelectedNodeId(nodeId);
@@ -903,7 +1021,7 @@ export function BrickTreeApp() {
             generatedNodeIds={generatedNodeIds}
             explanations={explanations}
             loadingNodeId={loadingNodeId}
-            resourceLoadingNodeId={resourceLoadingNodeId}
+            resourceLoadingNodeIds={resourceLoadingNodeIds}
             explanationLoadingNodeId={explanationLoadingNodeId}
             busyLabel={busyLabel}
             error={error}
@@ -917,6 +1035,7 @@ export function BrickTreeApp() {
             }}
             onContinue={(id) => { selectNode(id, false); void expandNode(id); }}
             onExplain={(id) => void explainNode(id, explanationLevel(profile))}
+            onRetryResources={retryNodeResources}
             onMarkKnown={markKnown}
             onTreeFromHere={(id) => branchFromNode(id, "tree")}
             onBrickFromHere={(id) => branchFromNode(id, "brick")}
@@ -1123,7 +1242,7 @@ function HierarchyStage({
   generatedNodeIds,
   explanations,
   loadingNodeId,
-  resourceLoadingNodeId,
+  resourceLoadingNodeIds,
   explanationLoadingNodeId,
   busyLabel,
   error,
@@ -1132,6 +1251,7 @@ function HierarchyStage({
   onClearFocus,
   onContinue,
   onExplain,
+  onRetryResources,
   onMarkKnown,
   onTreeFromHere,
   onBrickFromHere,
@@ -1148,7 +1268,7 @@ function HierarchyStage({
   generatedNodeIds: Set<string>;
   explanations: Record<string, AdaptiveExplanation>;
   loadingNodeId?: string;
-  resourceLoadingNodeId?: string;
+  resourceLoadingNodeIds: Set<string>;
   explanationLoadingNodeId?: string;
   busyLabel?: string;
   error?: string;
@@ -1157,6 +1277,7 @@ function HierarchyStage({
   onClearFocus: () => void;
   onContinue: (id: string) => void;
   onExplain: (id: string) => void;
+  onRetryResources: (id: string) => void;
   onMarkKnown: (id: string) => void;
   onTreeFromHere: (id: string) => void;
   onBrickFromHere: (id: string) => void;
@@ -1308,10 +1429,11 @@ function HierarchyStage({
                     busy={loadingNodeId === node.id}
                     busyLabel={loadingNodeId === node.id ? busyLabel : undefined}
                     explanationLoading={explanationLoadingNodeId === node.id}
-                    resourceLoading={resourceLoadingNodeId === node.id}
+                    resourceLoading={resourceLoadingNodeIds.has(node.id)}
                     error={selectedNodeId === node.id ? error : undefined}
                     warnings={selectedNodeId === node.id ? warnings : []}
                     onExplain={() => onExplain(node.id)}
+                    onRetryResources={() => onRetryResources(node.id)}
                     onContinue={() => onContinue(node.id)}
                     onMarkKnown={() => onMarkKnown(node.id)}
                     onTreeFromHere={() => onTreeFromHere(node.id)}
@@ -1561,6 +1683,7 @@ function KnowledgeNode({
   error,
   warnings,
   onExplain,
+  onRetryResources,
   onContinue,
   onMarkKnown,
   onTreeFromHere,
@@ -1582,15 +1705,13 @@ function KnowledgeNode({
   error?: string;
   warnings: string[];
   onExplain: () => void;
+  onRetryResources: () => void;
   onContinue: () => void;
   onMarkKnown: () => void;
   onTreeFromHere: () => void;
   onBrickFromHere: () => void;
   onDismissMessages: () => void;
 }) {
-  const detailPrerequisites = explanation?.prerequisites?.length ? explanation.prerequisites : node.prerequisites;
-  const detailUnlocks = explanation?.whatItUnlocks?.length ? explanation.whatItUnlocks : (node.whatItUnlocks ?? []);
-
   return (
     <article className={`${styles.knowledgeNode} ${selected ? styles.nodeSelected : ""}`}>
       <div className={styles.nodeMeta}>
@@ -1625,7 +1746,7 @@ function KnowledgeNode({
           if (event.currentTarget.open) onExplain();
         }}
       >
-        <summary>{explanationLoading ? "Loading detail…" : "Open detail + resources"}</summary>
+        <summary>{explanationLoading ? "Loading detail…" : "Open detail"}</summary>
         <div className={styles.detailBody}>
           <section>
             <h3>Explanation</h3>
@@ -1636,22 +1757,8 @@ function KnowledgeNode({
 
           {node.whyItMatters ? <section><h3>Why this node matters</h3><p>{node.whyItMatters}</p></section> : null}
 
-          <div className={styles.detailGrid}>
-            <section>
-              <h3>Prerequisites</h3>
-              {detailPrerequisites.length ? <ul>{detailPrerequisites.slice(0, 6).map((item) => <li key={item}>{item}</li>)}</ul> : <p>{mode === "brick" && node.depth === 0 ? "This is part of your stated Height 0 foundation, so Brick Tree is treating it as a starting point." : "No additional prerequisite was identified for this node at your current learning level."}</p>}
-            </section>
-            <section>
-              <h3>{mode === "tree" ? "What this branch reveals" : "What this brick unlocks"}</h3>
-              {detailUnlocks.length ? <ul>{detailUnlocks.slice(0, 6).map((item) => <li key={item}>{item}</li>)}</ul> : <p>{generated ? `The visible next layer already captures the adjacent concepts currently reachable from ${node.title}.` : `Open or continue from ${node.title} to generate the next adjacent learning step.`}</p>}
-            </section>
-          </div>
-
           <section>
-            <div className={styles.resourceHeader}>
-              <h3>Resources</h3>
-              <span>{resourceLoading ? "Loading…" : node.resources.length ? "Ready" : "Unavailable"}</span>
-            </div>
+            <h3>Resources</h3>
             {node.resources.length ? (
               <div className={styles.resources}>
                 {node.resources.map((resource) => (
@@ -1661,7 +1768,14 @@ function KnowledgeNode({
                   </a>
                 ))}
               </div>
-            ) : <p>{resourceLoading ? "Loading resources for this node…" : "No resource links are available for this node yet."}</p>}
+            ) : resourceLoading ? (
+              <p>Loading adaptive resources for this node…</p>
+            ) : (
+              <div className={styles.resourceEmpty}>
+                <p>No credible matching external resource was returned.</p>
+                <button type="button" onClick={onRetryResources}>Retry resources</button>
+              </div>
+            )}
           </section>
 
           <div className={styles.secondaryActions}>

@@ -99,7 +99,7 @@ Use this universal difficulty scale:
 4 Advanced — strong prerequisite fluency and several interacting abstractions or methods.
 5 Expert — deep specialized knowledge, high formalism, or open-ended expert judgment.
 
-Every child must include a concise one- or two-sentence description answering "What is this?" immediately plus one short explanation of why it sits at its assigned difficulty. Difficulty-factor arrays are optional and should stay short. Do not spend initial-generation tokens on prerequisites, outcomes, applications, examples, unlocks, or learning-time estimates unless they are essential; those details can be generated lazily when the learner opens a node.
+Every child must include a concise one- or two-sentence description answering "What is this?" immediately plus one short explanation of why it sits at its assigned difficulty. Difficulty-factor arrays are optional and should stay short. Do not spend initial-generation tokens on prerequisites, outcomes, applications, examples, unlocks, or learning-time estimates unless they materially change the graph or resource relevance. Node detail does not display prerequisite/unlock filler.
 
 For every generated Tree layer, also return levelNarrative with exactly two concise explanations:
 - sameLevelReason: explain why these sibling nodes belong at the same visual Depth for THIS learner and THIS parent. Refer to their comparable prerequisite load, abstraction, or reasoning effort rather than merely saying they have similar difficulty scores.

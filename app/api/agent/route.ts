@@ -1,5 +1,5 @@
 import { AgentRequestSchema } from "@/lib/schemas/api";
-import { branchFromConcept, discoverLearningPath, explainConcept, findResources, navigateTree } from "@/lib/agents/orchestrator";
+import { branchFromConcept, discoverLearningPath, explainConcept, findResourcesBatch, navigateTree } from "@/lib/agents/orchestrator";
 import { LLMConfigurationError, LLMResponseError } from "@/lib/llm/provider";
 import { assertSameOrigin, requestBodyTooLarge } from "@/lib/utils/request";
 
@@ -46,8 +46,13 @@ export async function POST(request: Request) {
 
   try {
     const action = parsed.data;
-    const documents = action.documents;
 
+    if (action.action === "resources") {
+      const result = await findResourcesBatch({ nodes: action.nodes, learnerProfile: action.learnerProfile });
+      return Response.json({ ok: true, ...result });
+    }
+
+    const documents = action.documents;
     if (action.action === "navigate") {
       if (action.traversal.mode === "tree") {
         const result = await navigateTree({
@@ -85,11 +90,6 @@ export async function POST(request: Request) {
         learnerProfile: action.learnerProfile,
         documents,
       });
-      return Response.json({ ok: true, ...result });
-    }
-
-    if (action.action === "resources") {
-      const result = await findResources({ node: action.node, learnerProfile: action.learnerProfile });
       return Response.json({ ok: true, ...result });
     }
 

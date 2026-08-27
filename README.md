@@ -7,19 +7,18 @@ Brick Tree is a stateless learning map with two separate directions:
 - **Tree** cuts a concept into branches, traces prerequisites, or examines a broad question.
 - **Brick** starts from known foundations and constructs reachable knowledge upward, either by exploring or building toward a destination.
 
-## 0.8.4 adaptive resource updates
+## 0.8.5 node resources + API efficiency
 
-- Adaptive resources now separate **difficulty** from **resource format**: harder nodes receive deeper material, but do not automatically receive research papers.
-- Conceptual nodes favor clear explanations/courses/videos; procedural class/exam nodes favor worked examples and practice; implementation/project nodes favor documentation and references; advanced established concepts favor deep reference material; research/evidence nodes may include papers.
-- Academic retrieval is no longer a generic fallback when web search is unavailable. If papers are not appropriate for the node, the system returns no external resource rather than filling the panel with irrelevant scholarly results.
-- Scholarly indexing and citation counts remain credibility evidence, but their deterministic ranking bonus is intentionally smaller than exact relevance and resource-type fit.
-- Both deterministic and LLM selection enforce the adaptive maximum-paper budget, so an LLM cannot reintroduce a paper-heavy result set.
-- All native dropdowns use one explicit dark palette so selected values and option menus remain readable.
-- Brick accepts free-form foundation prose, sends the raw statement to the Learning Path Agent, and keeps a deterministic schema-safe fallback parser. Negated knowledge is not marked as known, and starting-from-scratch statements are supported.
-- Learning Path output normalizes harmless model shape variations such as an object returned where a text field was expected, preventing Groq formatting differences from aborting an otherwise usable path.
-- Brick initial generation stays compact like Tree; richer prerequisites and unlocks are loaded lazily when node detail is opened.
-- Node detail now requests and displays adaptive prerequisites and concrete next-step unlocks instead of static placeholder copy.
-- Explanation requests can refresh when the requested learner level changes, and failed automatic resource lookups can be retried.
+- **Prerequisite/unlock filler is removed from Tree and Brick detail.** Node detail now stays focused on the explanation, why the node matters, adaptive resources, and actions that actually change the graph.
+- **Every visible generated node is automatically given one adaptive resource-discovery attempt.** Initial Tree/Brick rows and newly generated layers hydrate resources in a single compact client request; imported/older workspaces are backfilled the same way.
+- **Resource format remains adaptive from 0.8.4.** Difficulty changes depth, not source type: conceptual nodes favor explanations/courses/videos, procedural class or exam nodes favor worked examples, implementation/project nodes favor documentation and references, and papers are reserved for genuine research/evidence intent.
+- **Resource API calls are compact and bounded.** One high-signal web query is the normal path for a node, academic lookup is added only when warranted, and each search normally calls one provider/index with a fallback only when results are insufficient or the primary fails.
+- **Provider use remains source-neutral.** Tavily/Brave and Crossref/OpenAlex/Semantic Scholar primaries rotate by query; no preferred-domain whitelist or institution boost was added.
+- **Warm-instance resource caching avoids repeat retrieval.** Relevant resource sets are cached for 20 minutes using node context, learner fit, adaptive strategy, and selection mode.
+- **Generation payloads do not resend cached resources or detailed explanations.** Explanation and resource endpoints receive only the node/profile fields that can change their result; resource calls never resend uploaded documents.
+- **LLM-heavy resource ranking remains opt-in.** Deterministic adaptive selection is the default, so attaching resources to every node does not create an additional model call per node.
+- **0.8.3 Brick hardening remains intact.** Brick accepts free-form foundation prose, normalizes harmless Groq output-shape variations, handles negated knowledge and starting-from-scratch statements, and keeps its initial generation compact.
+- All native dropdowns retain the explicit dark palette and consistent format from the functional-hardening build.
 
 ## Interaction model
 
@@ -73,7 +72,7 @@ Tree and Brick maps are independent workspaces. You can create several of each a
 
 ## Node behavior
 
-Nodes stay compact until focused. Compact nodes show the concept name and brief description. A focused node expands to include explanation, prerequisites, why it matters, resources, and the control to branch or construct the next layer.
+Nodes stay compact until focused. Compact nodes show the concept name and brief description. A focused node expands to include a concise adaptive explanation, why the node matters, its node-specific resources, and the controls that change the graph.
 
 The main learning graph is not a free-drag canvas: navigation is click-to-focus plus two-dimensional scroll/swipe. The left Depth/Height rail is clickable and explains what each signed level means.
 
@@ -99,7 +98,7 @@ Every handoff is a structured runtime message with an ID, source agent, destinat
 
 ## Source-neutral resource agent
 
-The Resource Agent does not use a preferred-domain whitelist or a curated catalog of favored websites. It creates node-specific queries, retrieves a mixed candidate pool, and then evaluates candidates using relevance, credibility evidence, learner/audience fit, node difficulty, and source diversity.
+The Resource Agent does not use a preferred-domain whitelist or a curated catalog of favored websites. It derives the useful resource format from the node, learner, task, and difficulty, retrieves a small node-specific candidate pool, and then evaluates candidates using relevance, credibility evidence, learner/audience fit, type/depth fit, and source diversity.
 
 Web retrieval can use Tavily and Brave Search. Scholarly retrieval can use Crossref, OpenAlex, and Semantic Scholar when configured. Wikipedia/Wikimedia are excluded. The model-based selector is only allowed to return candidate IDs from the retrieved pool, so it cannot invent URLs. If model selection is disabled, unavailable, or rate-limited, deterministic scoring applies the same relevance/credibility/fit/diversity principles.
 
@@ -113,6 +112,10 @@ Brick Tree is designed for free/free-tier model APIs, so provider limits are tre
 - `Retry-After` is respected when supplied.
 - Gemini uses JSON Object mode first to avoid spending an extra compatibility call on JSON Schema negotiation.
 - Normal pedagogy checks are deterministic by default, avoiding an extra validator LLM call on every graph generation.
+- Resource discovery for a generated layer is sent as one compact HTTP batch instead of one browser request per node.
+- Each node normally uses one high-signal web query and one primary search provider; a second provider is only a fallback. Academic search is skipped entirely unless the adaptive strategy warrants it.
+- Nonempty adaptive resource results are cached for 20 minutes per warm server instance, and batch search concurrency is deliberately bounded.
+- Deterministic resource selection is the default, avoiding one Resource Agent LLM call per node.
 - Output is capped to reduce token-per-minute pressure.
 - Groq, Gemini, Cloudflare Workers AI, OpenRouter, and one generic OpenAI-compatible endpoint can share the workload.
 
@@ -189,7 +192,9 @@ Set `PEDAGOGY_VALIDATION_MODE=llm` only when you explicitly want every candidate
 
 ## Resource APIs
 
-Optional resource integrations:
+For automatic external resources on ordinary learning nodes, configure at least one general web provider (`TAVILY_API_KEY` or `BRAVE_SEARCH_API_KEY`). Crossref/OpenAlex can be queried without a search key for nodes whose adaptive strategy genuinely calls for scholarly evidence, but academic indexes are intentionally not used as a generic replacement for web learning resources.
+
+Resource integrations:
 
 ```env
 TAVILY_API_KEY=
@@ -241,7 +246,7 @@ Brick Destination
 one deeper Tree branch
 one higher Brick layer
 one explanation
-one resource lookup
+automatic resources on each visible generated node
 one document upload
 session export/import
 ```

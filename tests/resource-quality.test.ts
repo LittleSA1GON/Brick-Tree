@@ -12,6 +12,11 @@ const resources = read("lib/schemas/resources.ts");
 const toolIndex = read("lib/tools/index.ts");
 const webTool = read("lib/tools/implementations/web-search.ts");
 const academicTool = read("lib/tools/implementations/academic-search.ts");
+const apiSchema = read("lib/schemas/api.ts");
+const resourceRequestBlock = apiSchema.slice(
+  apiSchema.indexOf("const ResourcesRequestSchema"),
+  apiSchema.indexOf("const ExplainRequestSchema"),
+);
 
 describe("source-neutral, learner-aware resource quality", () => {
   it("removes the curated preferred-site catalog and domain whitelist", () => {
@@ -59,4 +64,19 @@ describe("source-neutral, learner-aware resource quality", () => {
     expect(resourceStrategy).toContain("implementationSignal");
     expect(resourceAgent).toContain("higher difficulty with research papers");
   });
+
+  it("minimizes resource API traffic without sacrificing adaptive selection", () => {
+    expect(orchestrator).toContain("One high-signal web query per node");
+    expect(orchestrator).toContain("queries.slice(0, 2)");
+    expect(orchestrator).toContain("findResourcesBatch");
+    expect(webTool).toContain("Rotate the primary provider by query");
+    expect(academicTool).toContain("Use one index normally");
+    expect(apiSchema).toContain("nodes: z.array(ResourceNodeContextSchema).min(1).max(20)");
+    expect(resourceRequestBlock).not.toContain("documents:");
+    expect(orchestrator).toContain("RESOURCE_CACHE_TTL_MS");
+    expect(orchestrator).toContain("const concurrency = 2");
+    expect(webTool).toContain("Only fall back when the first source");
+    expect(academicTool).toContain("touch another index only when the first one fails");
+  });
+
 });

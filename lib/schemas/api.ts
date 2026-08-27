@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ConceptNodeSchema, GraphContextSchema } from "./concept";
 import { ExtractedDocumentSchema } from "./documents";
 import { LearnerProfileSchema } from "./learning-path";
+import { ResourceNodeContextSchema } from "./resources";
 import { LearningTraversalSchema } from "./session";
 
 export const ExplanationLevelSchema = z.enum([
@@ -12,6 +13,31 @@ export const ExplanationLevelSchema = z.enum([
   "expert",
 ]);
 export type ExplanationLevel = z.infer<typeof ExplanationLevelSchema>;
+
+export const ExplanationNodeContextSchema = ConceptNodeSchema.pick({
+  id: true,
+  title: true,
+  shortDescription: true,
+  whyItMatters: true,
+  difficultyExplanation: true,
+  difficultyFactors: true,
+});
+export type ExplanationNodeContext = z.infer<typeof ExplanationNodeContextSchema>;
+
+export const AdaptiveExplanationSchema = z.object({
+  explanation: z.string().min(1).max(4000),
+  sourceSummary: z.string().max(2400).optional(),
+  example: z.string().min(1).max(1800),
+  keyTakeaway: z.string().min(1).max(700),
+  level: ExplanationLevelSchema.optional(),
+  evidence: z.array(z.object({
+    documentId: z.string(),
+    sectionId: z.string(),
+    page: z.number().int().positive().optional(),
+    heading: z.string().optional(),
+  })).max(8).default([]),
+});
+export type AdaptiveExplanation = z.infer<typeof AdaptiveExplanationSchema>;
 
 const NavigateRequestSchema = z
   .object({
@@ -43,14 +69,13 @@ const NavigateRequestSchema = z
 
 const ResourcesRequestSchema = z.object({
   action: z.literal("resources"),
-  node: ConceptNodeSchema,
+  nodes: z.array(ResourceNodeContextSchema).min(1).max(20),
   learnerProfile: LearnerProfileSchema.optional(),
-  documents: z.array(ExtractedDocumentSchema).max(6).optional(),
 });
 
 const ExplainRequestSchema = z.object({
   action: z.literal("explain"),
-  node: ConceptNodeSchema,
+  node: ExplanationNodeContextSchema,
   level: ExplanationLevelSchema,
   learnerProfile: LearnerProfileSchema.optional(),
   documents: z.array(ExtractedDocumentSchema).max(6).optional(),

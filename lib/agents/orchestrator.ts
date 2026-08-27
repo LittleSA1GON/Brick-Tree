@@ -29,8 +29,8 @@ import { conceptId, edgeId } from "@/lib/graph/graph-utils";
 import { normalizeConceptTitle } from "@/lib/utils/text";
 import { LLMConfigurationError } from "@/lib/llm/provider";
 import { createLLMProvider } from "@/lib/llm/factory";
-import { ExplanationLevelSchema, type ExplanationLevel } from "@/lib/schemas/api";
-import type { RawSearchResult, ResourceCandidate, ResourceQueryPlan, ResourceSelection } from "@/lib/schemas/resources";
+import { AdaptiveExplanationSchema, ExplanationLevelSchema, type AdaptiveExplanation, type ExplanationLevel, type ExplanationNodeContext } from "@/lib/schemas/api";
+import type { RawSearchResult, ResourceCandidate, ResourceNodeContext, ResourceQueryPlan, ResourceSelection } from "@/lib/schemas/resources";
 import type { RetrievedChunk } from "@/lib/schemas/documents";
 import { evidenceCoverageFindings, verifiedEvidenceReferences } from "@/lib/documents/provenance";
 import { learnerFitIssues } from "@/lib/learning/learner-fit";
@@ -40,30 +40,39 @@ const agents = createAgentRegistry();
 const tools = createToolRegistry();
 const runtime = new AgentRuntime(agents, tools);
 
-type ExplanationResponse = {
-  explanation: string;
-  sourceSummary?: string;
-  example: string;
-  keyTakeaway: string;
-  prerequisites: string[];
-  whatItUnlocks: string[];
-  evidence: Array<{ documentId: string; sectionId: string; page?: number; heading?: string }>;
-};
+const RESOURCE_CACHE_TTL_MS = 20 * 60 * 1000;
+const RESOURCE_CACHE_LIMIT = 200;
+const resourceCache = new Map<string, { expiresAt: number; resources: ResourceLink[] }>();
 
-const ExplanationResponseSchema = z.object({
-  explanation: z.string().min(1).max(4000),
-  sourceSummary: z.string().max(2400).optional(),
-  example: z.string().min(1).max(1800),
-  keyTakeaway: z.string().min(1).max(700),
-  prerequisites: z.array(z.string().min(1).max(180)).max(6).default([]),
-  whatItUnlocks: z.array(z.string().min(1).max(180)).max(6).default([]),
-  evidence: z.array(z.object({
-    documentId: z.string(),
-    sectionId: z.string(),
-    page: z.number().int().positive().optional(),
-    heading: z.string().optional(),
-  })).max(8).default([]),
-});
+function resourceCacheKey(node: ResourceNodeContext, profile: LearnerProfile | undefined, strategy: ResourceStrategy, mode: string): string {
+  return JSON.stringify({
+    title: normalizeConceptTitle(node.title),
+    description: normalizeConceptTitle(node.shortDescription).slice(0, 180),
+    difficulty: node.difficulty,
+    intent: strategy.intent,
+    targetTypes: strategy.targetTypes,
+    maxPapers: strategy.maxPapers,
+    educationLevel: profile?.educationLevel ?? "high-school",
+    knowledgeLevel: profile?.knowledgeLevel ?? "beginner",
+    purpose: profile?.purpose ?? "general-learning",
+    exploreBias: profile?.exploreBias ?? "balanced",
+    depthPreference: profile?.depthPreference ?? "balanced",
+    languageStyle: profile?.languageStyle ?? "standard",
+    preferredResourceTypes: (profile?.preferredResourceTypes ?? []).slice(0, 6).map((value) => value.toLowerCase()).sort(),
+    preferredExamples: (profile?.preferredExamples ?? []).slice(0, 4).map((value) => value.toLowerCase()).sort(),
+    goal: (profile?.learningGoal ?? profile?.goal ?? "").slice(0, 240).toLowerCase(),
+    mode,
+  });
+}
+
+function cacheResources(key: string, resources: ResourceLink[]): void {
+  if (!resources.length) return;
+  if (resourceCache.size >= RESOURCE_CACHE_LIMIT) {
+    const oldest = resourceCache.keys().next().value as string | undefined;
+    if (oldest) resourceCache.delete(oldest);
+  }
+  resourceCache.set(key, { expiresAt: Date.now() + RESOURCE_CACHE_TTL_MS, resources });
+}
 
 export type WorkflowEnvelope<T> = {
   data: T;
@@ -1494,7 +1503,7 @@ function typeSearchTerms(strategy: ResourceStrategy): string {
 }
 
 function deterministicResourcePlan(
-  node: ConceptNode,
+  node: ResourceNodeContext,
   webSearchAvailable: boolean,
   profile: LearnerProfile | undefined,
   strategy: ResourceStrategy,
@@ -1503,53 +1512,41 @@ function deterministicResourcePlan(
   const education = profile?.educationLevel ?? "high-school";
   const purpose = profile?.purpose ?? "general-learning";
   const audience = `${education} ${level}`;
+  const preferred = (profile?.preferredResourceTypes ?? []).slice(0, 3).join(" ").trim();
+  const intentTerms: Record<ResourceStrategy["intent"], string> = {
+    conceptual: "clear explanation examples",
+    procedural: "worked examples practice step by step",
+    implementation: "official documentation implementation examples",
+    reference: "deep reference handbook guide",
+    research: "technical overview evidence review",
+  };
+  const learningGoal = purpose === "exam" || purpose === "class"
+    ? "practice lesson worked examples"
+    : preferred || intentTerms[strategy.intent];
   const queries: ResourceQueryPlan["queries"] = [];
 
+  // One high-signal web query per node is the normal path. The search tool itself
+  // rotates between configured providers and only falls back when needed, avoiding
+  // the old multiplication of several near-duplicate queries across both providers.
   if (webSearchAvailable) {
     queries.push({
-      query: compactSearchQuery(node.title, audience, typeSearchTerms(strategy)),
+      query: compactSearchQuery(node.title, audience, learningGoal, typeSearchTerms(strategy)),
       source: "web",
-      reason: `Find ${strategy.targetTypes.join(", ")} resources that match the node's ${node.difficulty}/5 difficulty and the learner's level.`,
+      reason: `Single adaptive web query for ${strategy.targetTypes.join(", ")} at ${node.difficulty}/5 difficulty.`,
     });
-
-    const intentQuery: Record<ResourceStrategy["intent"], string> = {
-      conceptual: compactSearchQuery(node.title, "explained examples overview", audience),
-      procedural: compactSearchQuery(node.title, "worked examples practice step by step", audience),
-      implementation: compactSearchQuery(node.title, "official documentation implementation examples", audience),
-      reference: compactSearchQuery(node.title, "reference handbook deep guide", audience),
-      research: compactSearchQuery(node.title, "technical overview evidence review", audience),
-    };
-    queries.push({
-      query: intentQuery[strategy.intent],
-      source: "web",
-      reason: `Add a complementary ${strategy.intent} resource pool instead of assuming one format fits every difficult concept.`,
-    });
-
-    const preferred = (profile?.preferredResourceTypes ?? []).join(" ").trim();
-    if (preferred) {
-      queries.push({
-        query: compactSearchQuery(node.title, preferred, audience),
-        source: "web",
-        reason: "Respect the learner's explicit resource-format preference when relevant material exists.",
-      });
-    } else if (purpose === "class" || purpose === "exam") {
-      queries.push({
-        query: compactSearchQuery(node.title, "practice problems worked examples lesson", audience),
-        source: "web",
-        reason: "Class and exam goals benefit from instruction plus practice, not research literature by default.",
-      });
-    }
   }
 
+  // Academic retrieval is additive only when the resource strategy explicitly
+  // warrants papers/evidence; difficulty by itself never creates this call.
   if (strategy.academicSearch) {
     queries.push({
       query: compactSearchQuery(node.title, purpose === "research" ? "research evidence literature" : "scholarly evidence review"),
       source: "academic",
-      reason: `Add scholarly literature because this node/learner context calls for it; cap selected papers at ${strategy.maxPapers}.`,
+      reason: `Academic evidence is relevant here; selected papers remain capped at ${strategy.maxPapers}.`,
     });
   }
 
-  return { queries: queries.slice(0, 4) };
+  return { queries: queries.slice(0, 2) };
 }
 
 function resourceTokens(value: string): string[] {
@@ -1565,8 +1562,8 @@ function resourceHost(url: string): string {
   catch { return "unknown"; }
 }
 
-function relevanceScore(candidate: RawSearchResult, node: ConceptNode): number {
-  const targetTokens = new Set(resourceTokens(`${node.title} ${node.shortDescription} ${node.prerequisites.join(" ")}`));
+function relevanceScore(candidate: RawSearchResult, node: ResourceNodeContext): number {
+  const targetTokens = new Set(resourceTokens(`${node.title} ${node.shortDescription} ${node.difficultyFactors.join(" ")} ${node.learningOutcomes.join(" ")} ${node.applications.join(" ")}`));
   if (!targetTokens.size) return 0.5;
   const titleTokens = resourceTokens(candidate.title);
   const bodyTokens = new Set(resourceTokens(`${candidate.title} ${candidate.snippet ?? ""}`));
@@ -1588,7 +1585,7 @@ function credibilityScore(candidate: RawSearchResult): number {
   return Math.min(1, score);
 }
 
-function audienceFitScore(candidate: RawSearchResult, node: ConceptNode, profile?: LearnerProfile): number {
+function audienceFitScore(candidate: RawSearchResult, node: ResourceNodeContext, profile?: LearnerProfile): number {
   const education = (profile?.educationLevel ?? "high-school").toLowerCase();
   const knowledge = profile?.knowledgeLevel ?? "beginner";
   const introductory = ["elementary", "middle-school", "high-school"].includes(education)
@@ -1611,7 +1608,7 @@ function audienceFitScore(candidate: RawSearchResult, node: ConceptNode, profile
 
 function deterministicResourceSelection(
   candidates: ResourceCandidate[],
-  node: ConceptNode,
+  node: ResourceNodeContext,
   profile: LearnerProfile | undefined,
   strategy: ResourceStrategy,
 ): ResourceCandidate[] {
@@ -1688,14 +1685,25 @@ function enforceResourceMix(
 }
 
 export async function findResources(input: {
-  node: ConceptNode;
+  node: ResourceNodeContext;
   learnerProfile?: LearnerProfile;
-}): Promise<WorkflowEnvelope<{ resources: ResourceLink[]; summary: string }>> {
+}): Promise<WorkflowEnvelope<{ resources: ResourceLink[] }>> {
   const trace = new TraceCollector();
   const warnings: string[] = [];
   const env = getEnv();
   const webSearchAvailable = Boolean(env.TAVILY_API_KEY || env.BRAVE_SEARCH_API_KEY);
-  const originAgent = input.node.level.axis === "depth" ? "concept_architect" : "learning_path";
+  const originAgent = input.node.axis === "depth" ? "concept_architect" : "learning_path";
+  const strategy = buildResourceStrategy(input.node, input.learnerProfile);
+  const cacheKey = resourceCacheKey(input.node, input.learnerProfile, strategy, env.RESOURCE_PLANNING_MODE);
+  const cached = resourceCache.get(cacheKey);
+  if (cached?.expiresAt && cached.expiresAt > Date.now()) {
+    trace.add("agent_finish", `Resource Agent reused ${cached.resources.length} cached adaptive resources for ${input.node.title}.`, {
+      agent: "resource_agent",
+      metadata: { cache: "hit", resourceIntent: strategy.intent, targetTypes: strategy.targetTypes },
+    });
+    return { data: { resources: cached.resources }, trace: trace.list(), warnings };
+  }
+  if (cached) resourceCache.delete(cacheKey);
 
   runtime.handoff(originAgent, "resource_agent", trace, {
     summary: `${originAgent === "concept_architect" ? "Concept Architect" : "Learning Path Agent"} handed ${input.node.title} to Resource Agent for learner-specific source discovery.`,
@@ -1704,12 +1712,18 @@ export async function findResources(input: {
       nodeTitle: input.node.title,
       difficulty: input.node.difficulty,
       difficultyLabel: input.node.difficultyLabel,
-      level: input.node.level,
-      learnerProfile: input.learnerProfile ?? null,
+      axis: input.node.axis,
+      learnerProfile: input.learnerProfile ? {
+        educationLevel: input.learnerProfile.educationLevel,
+        knowledgeLevel: input.learnerProfile.knowledgeLevel,
+        purpose: input.learnerProfile.purpose,
+        depthPreference: input.learnerProfile.depthPreference,
+        exploreBias: input.learnerProfile.exploreBias,
+        preferredResourceTypes: input.learnerProfile.preferredResourceTypes?.slice(0, 6),
+      } : null,
     },
   });
 
-  const strategy = buildResourceStrategy(input.node, input.learnerProfile);
   const plan = deterministicResourcePlan(input.node, webSearchAvailable, input.learnerProfile, strategy);
   trace.add("agent_start", "Resource Agent created a source-neutral, format-adaptive retrieval plan from the node and learner context.", {
     agent: "resource_agent",
@@ -1723,13 +1737,13 @@ export async function findResources(input: {
   }
 
   const rawCandidates: RawSearchResult[] = [];
-  for (const query of plan.queries.slice(0, 4)) {
+  for (const query of plan.queries.slice(0, 2)) {
     const tool = query.source === "academic" ? "search_academic_resources" : "search_web";
     try {
       const results = (await runtime.executeTool(
         "resource_agent",
         tool,
-        { query: query.query, limit: 6 },
+        { query: query.query, limit: 5 },
         trace,
       )) as RawSearchResult[];
       rawCandidates.push(...results);
@@ -1763,7 +1777,7 @@ export async function findResources(input: {
 
   const deterministicSelected = deterministicResourceSelection(candidates, input.node, input.learnerProfile, strategy);
   let selected = deterministicSelected;
-  let selectionSummary = `Adaptive strategy: ${strategy.rationale} Selected with exact relevance, resource-type fit, credibility, learner fit, and diversity scoring.`;
+
 
   if (env.RESOURCE_PLANNING_MODE === "llm" && candidates.length) {
     try {
@@ -1782,7 +1796,7 @@ export async function findResources(input: {
         .slice(0, 5);
       if (llmSelected.length) {
         selected = enforceResourceMix(llmSelected, deterministicSelected, strategy);
-        selectionSummary = `${selection.summary} Adaptive strategy enforced: ${strategy.rationale}`;
+        trace.add("validation", selection.summary, { agent: "resource_agent" });
       } else {
         warnings.push("Resource Agent returned no valid candidate IDs, so deterministic selection was used.");
       }
@@ -1817,24 +1831,66 @@ export async function findResources(input: {
     },
   });
 
+  cacheResources(cacheKey, resources);
   return {
-    data: {
-      resources,
-      summary: resources.length
-        ? `${selectionSummary} Found ${resources.length} credible resource${resources.length === 1 ? "" : "s"} matched to this node and learner.`
-        : "No suitable external resources were available. The knowledge graph remains usable without them.",
-    },
+    data: { resources },
     trace: trace.list(),
     warnings,
   };
 }
 
+/**
+ * Hydrate a generated layer in one HTTP request while keeping each node's actual
+ * retrieval independent. Search calls run with a small concurrency cap so a row
+ * does not burst every provider at once.
+ */
+export async function findResourcesBatch(input: {
+  nodes: ResourceNodeContext[];
+  learnerProfile?: LearnerProfile;
+}): Promise<WorkflowEnvelope<{ items: Array<{ nodeId: string; resources: ResourceLink[] }> }>> {
+  const unique = [...new Map(input.nodes.map((node) => [node.id, node])).values()].slice(0, 20);
+  const items: Array<{ nodeId: string; resources: ResourceLink[] }> = [];
+  const traceEvents: ReturnType<TraceCollector["list"]> = [];
+  const warnings: string[] = [];
+  const concurrency = 2;
+  let cursor = 0;
+
+  async function worker() {
+    while (cursor < unique.length) {
+      const index = cursor;
+      cursor += 1;
+      const node = unique[index];
+      try {
+        const result = await findResources({ node, learnerProfile: input.learnerProfile });
+        items[index] = { nodeId: node.id, resources: result.data.resources };
+        traceEvents.push(...result.trace);
+        warnings.push(...result.warnings);
+      } catch (error) {
+        items[index] = { nodeId: node.id, resources: [] };
+        warnings.push(`Resources could not be loaded for ${node.title}.`);
+        const trace = new TraceCollector();
+        trace.add("error", `Resource hydration failed for ${node.title}: ${error instanceof Error ? error.message : String(error)}`, {
+          agent: "resource_agent",
+        });
+        traceEvents.push(...trace.list());
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, unique.length) }, () => worker()));
+  return {
+    data: { items: items.filter(Boolean) },
+    trace: traceEvents.slice(-100),
+    warnings: [...new Set(warnings)].slice(0, 10),
+  };
+}
+
 export async function explainConcept(input: {
-  node: ConceptNode;
+  node: ExplanationNodeContext;
   level: ExplanationLevel;
   learnerProfile?: LearnerProfile;
   documents?: ExtractedDocument[];
-}): Promise<WorkflowEnvelope<ExplanationResponse>> {
+}): Promise<WorkflowEnvelope<AdaptiveExplanation>> {
   ExplanationLevelSchema.parse(input.level);
   const trace = new TraceCollector();
   const evidence = await sourceEvidence({
@@ -1853,10 +1909,10 @@ export async function explainConcept(input: {
     agent: "concept_architect",
     metadata: { provider: provider.name, model: provider.model },
   });
-  const result = await provider.generateStructured<ExplanationResponse>({
-    system: `You adapt an existing concept explanation to a requested learner level and language style. Preserve the concept's meaning. Do not introduce unsupported URLs.
+  const result = await provider.generateStructured<AdaptiveExplanation>({
+    system: `You adapt an existing concept explanation to a requested learner level and language style. Preserve the concept's meaning, stay concise, and do not introduce unsupported URLs.
 
-Also return concise node-specific prerequisites and whatItUnlocks. Prefer 2-5 immediate prerequisites and 2-5 concrete next concepts/capabilities when pedagogically meaningful. Do not use placeholder text such as "none listed yet" or "branch this node". A true learner foundation may return an empty prerequisites array.
+Return only information that helps understand the selected node now: the explanation, one useful example, and one key takeaway. Do not generate prerequisite lists, unlock lists, learning-time estimates, or generic filler.
 
 If source evidence is provided, distinguish "what the source says" from your general educational explanation. In uploaded-only mode, do not make factual claims that cannot be supported by the evidence. Return evidence identifiers only when they appear in the supplied evidence metadata.`,
     user: `Concept: ${input.node.title}
@@ -1864,22 +1920,29 @@ Base description: ${input.node.shortDescription}
 Why it matters: ${input.node.whyItMatters ?? ""}
 Why it is difficult: ${input.node.difficultyExplanation}
 Difficulty factors: ${input.node.difficultyFactors.join(", ")}
-Current prerequisite hints: ${input.node.prerequisites.join(", ")}
-Current unlock hints: ${(input.node.whatItUnlocks ?? []).join(", ")}
 Requested explanation level: ${input.level}
-Learner/session profile: ${JSON.stringify(input.learnerProfile ?? {})}
+Learner/session profile: ${JSON.stringify(input.learnerProfile ? {
+  educationLevel: input.learnerProfile.educationLevel,
+  knowledgeLevel: input.learnerProfile.knowledgeLevel,
+  languageStyle: input.learnerProfile.languageStyle,
+  depthPreference: input.learnerProfile.depthPreference,
+  purpose: input.learnerProfile.purpose,
+  preferredExamples: input.learnerProfile.preferredExamples?.slice(0, 4),
+  courseContext: input.learnerProfile.courseContext?.slice(0, 1200),
+  goal: input.learnerProfile.learningGoal ?? input.learnerProfile.goal,
+} : {})}
 Source mode: ${sourceMode(input.learnerProfile)}
 Retrieved source evidence: ${JSON.stringify(evidence)}`,
-    schema: ExplanationResponseSchema,
+    schema: AdaptiveExplanationSchema,
     schemaName: "AdaptiveExplanation",
-    schemaHint: "JSON fields: explanation:string, sourceSummary?:string, example:string, keyTakeaway:string, prerequisites:string[], whatItUnlocks:string[], evidence:[{documentId,sectionId,page?,heading?}]. prerequisites should list immediate knowledge needed before this node; whatItUnlocks should list specific concepts/capabilities that become reachable next. Use [] only when genuinely none apply.",
+    schemaHint: "JSON fields: explanation:string, sourceSummary?:string, example:string, keyTakeaway:string, evidence:[{documentId,sectionId,page?,heading?}]. Keep every field node-specific and omit sourceSummary when no source evidence applies.",
     temperature: 0.25,
   });
   const verifiedExplanationEvidence = verifiedEvidenceReferences(result.data.evidence ?? [], evidence);
   if (sourceMode(input.learnerProfile) === "uploaded-only" && !verifiedExplanationEvidence.length) {
     throw new Error("The generated explanation did not preserve verifiable uploaded-source provenance.");
   }
-  let explanationData: ExplanationResponse = {
+  let explanationData: AdaptiveExplanation = {
     ...result.data,
     evidence: verifiedExplanationEvidence,
     sourceSummary: verifiedExplanationEvidence.length ? result.data.sourceSummary : undefined,
