@@ -119,7 +119,7 @@ Source fidelity:
 
 When evidence supports a child, include evidence references using documentId/sectionId/page/heading metadata supplied in retrievedEvidence. Never fabricate evidence identifiers. Never invent URLs. Do not include resources.`,
   allowedTools: ["search_knowledge_base", "search_uploaded_documents"],
-  allowedHandoffs: ["pedagogy_validator"],
+  allowedHandoffs: ["pedagogy_validator", "resource_agent"],
   maxSteps: 5,
   outputSchema: ConceptDecompositionSchema,
   schemaName: "ConceptDecomposition",

@@ -81,8 +81,8 @@ const EnvSchema = z.object({
   CLOUDFLARE_MIN_PROVIDER_INTERVAL_MS: optionalNumber(3000, 0, 30_000),
   OPENROUTER_MIN_PROVIDER_INTERVAL_MS: optionalNumber(6000, 0, 30_000),
 
-  // These default to deterministic logic so ordinary graph/resource actions do
-  // not spend an extra model call unless explicitly requested.
+  // Validation defaults to deterministic logic. Resource retrieval is always agent-routed;
+  // this flag controls whether final candidate selection also uses an LLM or the deterministic fallback.
   PEDAGOGY_VALIDATION_MODE: z.enum(["deterministic", "llm"]).default("deterministic"),
   RESOURCE_PLANNING_MODE: z.enum(["deterministic", "llm"]).default("deterministic"),
 });

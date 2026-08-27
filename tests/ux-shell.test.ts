@@ -47,8 +47,11 @@ describe("Brick Tree 0.8 interaction shell", () => {
     expect(appSource).toContain("Brick - Workspace map");
   });
 
-  it("keeps a small map visible and supports importing a single Tree or Brick", () => {
+  it("keeps a movable small map visible without turning the main graph into a drag canvas", () => {
     expect(appSource).toContain("PersistentMiniMap");
+    expect(appSource).toContain("Move mini map");
+    expect(appSource).toContain("setPointerCapture");
+    expect(appSource).toContain("persistentMapDragHandle");
     expect(appSource).toContain("Upload Tree / Brick");
     expect(appSource).toContain("createPortableWorkspaceFile");
     expect(appSource).toContain("parsePortableWorkspaceFile");

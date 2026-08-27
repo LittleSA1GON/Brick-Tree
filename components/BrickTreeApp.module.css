@@ -2561,3 +2561,29 @@
     min-height: 54px;
   }
 }
+
+/* The persistent overview moves independently from graph-node clicks. */
+.persistentMapDragHandle {
+  position: absolute;
+  top: 6px;
+  right: 7px;
+  z-index: 9;
+  width: 28px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 9px;
+  color: rgba(255,255,255,.5);
+  background: rgba(255,255,255,.035);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.persistentMapDragHandle:hover {
+  color: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 36%, rgba(255,255,255,.08));
+}
+
+.persistentMapDragHandle:active { cursor: grabbing; }

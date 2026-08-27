@@ -134,7 +134,7 @@ Source fidelity:
 - uploaded-only: claims and directions must be supportable by retrieved evidence.
 Never invent evidence identifiers or URLs.`,
   allowedTools: ["search_knowledge_base", "search_uploaded_documents"],
-  allowedHandoffs: ["pedagogy_validator"],
+  allowedHandoffs: ["pedagogy_validator", "resource_agent"],
   maxSteps: 5,
   outputSchema: LearningPathProposalSchema,
   schemaName: "LearningPathProposal",

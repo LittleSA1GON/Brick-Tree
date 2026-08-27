@@ -30,7 +30,7 @@ import { normalizeConceptTitle } from "@/lib/utils/text";
 import { LLMConfigurationError } from "@/lib/llm/provider";
 import { createLLMProvider } from "@/lib/llm/factory";
 import { ExplanationLevelSchema, type ExplanationLevel } from "@/lib/schemas/api";
-import type { RawSearchResult, ResourceQueryPlan } from "@/lib/schemas/resources";
+import type { RawSearchResult, ResourceCandidate, ResourceQueryPlan, ResourceSelection } from "@/lib/schemas/resources";
 import type { RetrievedChunk } from "@/lib/schemas/documents";
 import { evidenceCoverageFindings, verifiedEvidenceReferences } from "@/lib/documents/provenance";
 import { learnerFitIssues } from "@/lib/learning/learner-fit";
@@ -762,7 +762,16 @@ export async function navigateTree(input: {
         "concept_architect",
         "pedagogy_validator",
         trace,
-        `Concept Architect handed a ${input.intent === "decompose" ? "component" : input.intent === "analyze-question" ? "question-lens" : "prerequisite"} layer to Pedagogy Validator.`,
+        {
+          summary: `Concept Architect handed a ${input.intent === "decompose" ? "component" : input.intent === "analyze-question" ? "question-lens" : "prerequisite"} layer to Pedagogy Validator.`,
+          context: {
+            intent: input.intent,
+            parentTitle: parent.title,
+            candidateTitles: finalDecomposition.children.map((child) => child.title),
+            expectedLevel: finalLevel,
+            learnerProfile: input.learnerProfile ?? null,
+          },
+        },
       );
       const validator = await runtime.run<any, PedagogyValidation>(
         "pedagogy_validator",
@@ -850,7 +859,14 @@ export async function navigateTree(input: {
       "pedagogy_validator",
       "concept_architect",
       trace,
-      "Pedagogy Validator requested a bounded revision for conceptual, source, or difficulty consistency.",
+      {
+        summary: "Pedagogy Validator requested a bounded revision for conceptual, source, or difficulty consistency.",
+        context: {
+          issues: finalValidation.issues,
+          expectedLevel: finalLevel,
+          revision: revision + 1,
+        },
+      },
     );
     trace.add("revision", `Revision cycle ${revision + 1}: ${revisionFeedback.join(" | ")}`, {
       agent: "concept_architect",
@@ -1059,7 +1075,15 @@ export async function discoverLearningPath(input: {
         "learning_path",
         "pedagogy_validator",
         trace,
-        `Learning Path Agent handed a ${intent} next-brick layer to Pedagogy Validator.`,
+        {
+          summary: `Learning Path Agent handed a ${intent} next-brick layer to Pedagogy Validator.`,
+          context: {
+            intent,
+            candidateTitles: finalProposal.directions.map((direction) => direction.title),
+            expectedLevel: finalLevel,
+            learnerProfile: input.learnerProfile ?? null,
+          },
+        },
       );
       const validator = await runtime.run<any, PedagogyValidation>(
         "pedagogy_validator",
@@ -1123,7 +1147,14 @@ export async function discoverLearningPath(input: {
       "pedagogy_validator",
       "learning_path",
       trace,
-      "Pedagogy Validator requested a revised same-height next-brick layer.",
+      {
+        summary: "Pedagogy Validator requested a revised same-height next-brick layer.",
+        context: {
+          issues: finalValidation.issues,
+          expectedLevel: finalLevel,
+          revision: revision + 1,
+        },
+      },
     );
     trace.add("revision", `Learning-path revision ${revision + 1}: ${revisionFeedback.join(" | ")}`, {
       agent: "learning_path",
@@ -1260,7 +1291,15 @@ export async function branchFromConcept(input: {
         "learning_path",
         "pedagogy_validator",
         trace,
-        `Learning Path Agent handed Height +${nextHeight} to Pedagogy Validator.`,
+        {
+          summary: `Learning Path Agent handed Height +${nextHeight} to Pedagogy Validator.`,
+          context: {
+            height: nextHeight,
+            candidateTitles: finalProposal.directions.map((direction) => direction.title),
+            expectedLevel: finalLevel,
+            learnerProfile: input.learnerProfile ?? null,
+          },
+        },
       );
       const validator = await runtime.run<any, PedagogyValidation>(
         "pedagogy_validator",
@@ -1313,7 +1352,14 @@ export async function branchFromConcept(input: {
     if (finalValidation.valid && finalValidation.difficultyConsistency && finalValidation.sourceFidelity) break;
     if (revision >= getEnv().AGENT_MAX_REVISIONS || !finalValidation.recommendedRevision) break;
     revisionFeedback = finalValidation.issues.map((issue) => issue.message);
-    runtime.handoff("pedagogy_validator", "learning_path", trace, "Pedagogy Validator requested a revised stacked Brick row.");
+    runtime.handoff("pedagogy_validator", "learning_path", trace, {
+      summary: "Pedagogy Validator requested a revised stacked Brick row.",
+      context: {
+        issues: finalValidation.issues,
+        expectedLevel: finalLevel,
+        revision: revision + 1,
+      },
+    });
     trace.add("revision", `Stack revision ${revision + 1}: ${revisionFeedback.join(" | ")}`, { agent: "learning_path" });
   }
 
@@ -1391,7 +1437,7 @@ export async function branchFromConcept(input: {
 function safeCandidateUrl(candidate: RawSearchResult): boolean {
   try {
     const parsed = new URL(candidate.url);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
+    if (parsed.protocol !== "https:") return false;
     const host = parsed.hostname.toLowerCase();
     if (host === "localhost" || host === "::1" || host.endsWith(".local")) return false;
     if (host.endsWith("wikipedia.org") || host.endsWith("wikimedia.org")) return false;
@@ -1404,38 +1450,6 @@ function safeCandidateUrl(candidate: RawSearchResult): boolean {
   }
 }
 
-function resourceSubjectDomains(node: ConceptNode, profile?: LearnerProfile): string[] {
-  const text = `${node.title} ${node.shortDescription}`.toLowerCase();
-  const education = (profile?.educationLevel ?? "high-school").toLowerCase();
-  const schoolLearner = ["elementary", "middle-school", "high-school"].includes(education)
-    || ["novice", "beginner"].includes(profile?.knowledgeLevel ?? "beginner");
-
-  if (/algebra|geometry|trigonometry|calculus|statistics|probability|mathematics|equation|function/.test(text)) {
-    return schoolLearner
-      ? ["khanacademy.org", "openstax.org"]
-      : ["ocw.mit.edu", "openstax.org", "khanacademy.org"];
-  }
-  if (/machine learning|neural|regression|classification|artificial intelligence|deep learning/.test(text)) {
-    return schoolLearner
-      ? ["developers.google.com", "khanacademy.org"]
-      : ["cs229.stanford.edu", "developers.google.com", "ocw.mit.edu"];
-  }
-  if (/python|javascript|typescript|programming|software|web development|computer science|algorithm/.test(text)) {
-    return schoolLearner
-      ? ["cs50.harvard.edu", "developer.mozilla.org", "docs.python.org"]
-      : ["ocw.mit.edu", "developer.mozilla.org", "docs.python.org", "cs50.harvard.edu"];
-  }
-  if (/physics|mechanics|electricity|thermodynamics/.test(text)) {
-    return schoolLearner ? ["khanacademy.org", "openstax.org"] : ["ocw.mit.edu", "openstax.org"];
-  }
-  if (/biology|genetics|ecology|cell|chemistry|molecule|reaction/.test(text)) {
-    return ["openstax.org", "khanacademy.org"];
-  }
-  return schoolLearner
-    ? ["khanacademy.org", "openstax.org"]
-    : ["ocw.mit.edu", "openstax.org"];
-}
-
 function isResearchAudience(node: ConceptNode, profile?: LearnerProfile): boolean {
   const education = (profile?.educationLevel ?? "high-school").toLowerCase();
   const level = profile?.knowledgeLevel ?? "beginner";
@@ -1446,8 +1460,7 @@ function isResearchAudience(node: ConceptNode, profile?: LearnerProfile): boolea
   const introductoryLearner = ["elementary", "middle-school", "high-school"].includes(education)
     || ["novice", "beginner"].includes(level);
 
-  if (introductoryLearner && !explicitlyWantsResearch) return false;
-
+  if (introductoryLearner && !explicitlyWantsResearch && node.difficulty < 4) return false;
   return explicitlyWantsResearch
     || node.difficulty >= 4
     || ["graduate", "professional"].includes(education)
@@ -1459,57 +1472,167 @@ function deterministicResourcePlan(
   webSearchAvailable: boolean,
   profile?: LearnerProfile,
 ): ResourceQueryPlan {
-  const preferred = (profile?.preferredResourceTypes ?? []).join(" ");
+  const preferred = (profile?.preferredResourceTypes ?? []).join(" ").trim();
   const level = profile?.knowledgeLevel ?? "beginner";
   const education = profile?.educationLevel ?? "high-school";
   const purpose = profile?.purpose ?? "general-learning";
   const audience = `${education} ${level}`;
-  const domains = resourceSubjectDomains(node, profile);
   const researchAudience = isResearchAudience(node, profile);
+  const queries: ResourceQueryPlan["queries"] = [];
 
-  const queries: ResourceQueryPlan["queries"] = [
-    {
-      query: `${node.title} ${audience} ${purpose} learning resource`,
-      source: "institution",
-      reason: "Start with reputable instructional material whose difficulty matches the learner.",
-    },
-  ];
+  if (webSearchAvailable) {
+    queries.push({
+      query: `${node.title} ${audience} ${purpose} ${preferred || "explanation tutorial course guide"}`,
+      source: "web",
+      reason: "Retrieve a broad web pool for learner-level explanations and instruction without restricting results to preferred domains.",
+    });
+    if (purpose === "project" || profile?.exploreBias === "technical" || /documentation|reference/i.test(preferred)) {
+      queries.push({
+        query: `${node.title} official documentation technical guide reference ${audience}`,
+        source: "web",
+        reason: "Add primary or technical material when the learner's purpose benefits from direct references.",
+      });
+    } else if (["elementary", "middle-school", "high-school"].includes(education) || ["novice", "beginner"].includes(level)) {
+      queries.push({
+        query: `${node.title} worked examples practice visual explanation ${audience}`,
+        source: "web",
+        reason: "Add approachable practice-oriented material for an introductory learner.",
+      });
+    }
+  }
 
   if (researchAudience) {
     queries.push({
-      query: `${node.title} ${purpose === "research" ? "research paper" : "scholarly overview"}`,
+      query: `${node.title} ${purpose === "research" ? "research" : "scholarly overview"}`,
       source: "academic",
-      reason: "The learner or concept is advanced enough for primary or scholarly literature.",
+      reason: "Retrieve scholarly candidates only when the node difficulty or learner context makes academic literature useful.",
     });
   }
 
-  if (webSearchAvailable) {
-    const preferenceTerms = preferred || (purpose === "project" ? "official documentation tutorial" : "course tutorial official educational material");
+  if (!queries.length) {
     queries.push({
-      query: `${node.title} ${audience} ${preferenceTerms}`,
-      source: "web",
-      domains,
-      reason: "Search only trusted institutional or official domains for material fitted to this learner.",
+      query: `${node.title} scholarly overview`,
+      source: "academic",
+      reason: "Use open scholarly indexes as the available neutral retrieval pool when no web-search key is configured.",
     });
   }
 
-  return { queries };
+  return { queries: queries.slice(0, 4) };
 }
 
-function resourcePriority(candidate: RawSearchResult, node: ConceptNode, profile?: LearnerProfile): number {
-  const source = candidate.source.toLowerCase();
-  const education = (profile?.educationLevel ?? "high-school").toLowerCase();
-  const level = profile?.knowledgeLevel ?? "beginner";
-  const schoolLearner = ["elementary", "middle-school", "high-school"].includes(education)
-    || ["novice", "beginner"].includes(level);
-  const researchAudience = isResearchAudience(node, profile);
+function resourceTokens(value: string): string[] {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9+#. -]+/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length > 2);
+}
 
-  if (source.includes("khan academy")) return schoolLearner ? 140 : 70;
-  if (source.includes("openstax")) return schoolLearner ? 130 : 100;
-  if (source.includes("mit") || source.includes("stanford") || source.includes("harvard")) return researchAudience ? 125 : 115;
-  if (source.includes("google for developers") || source.includes("python documentation") || source.includes("mdn")) return 120;
-  if (source.includes("crossref")) return researchAudience ? 150 : node.difficulty >= 4 ? 120 : 45;
-  return 80;
+function resourceHost(url: string): string {
+  try { return new URL(url).hostname.toLowerCase().replace(/^www\./, ""); }
+  catch { return "unknown"; }
+}
+
+function relevanceScore(candidate: RawSearchResult, node: ConceptNode): number {
+  const targetTokens = new Set(resourceTokens(`${node.title} ${node.shortDescription} ${node.prerequisites.join(" ")}`));
+  if (!targetTokens.size) return 0.5;
+  const titleTokens = resourceTokens(candidate.title);
+  const bodyTokens = new Set(resourceTokens(`${candidate.title} ${candidate.snippet ?? ""}`));
+  const titleMatches = titleTokens.filter((token) => targetTokens.has(token)).length;
+  const allMatches = [...targetTokens].filter((token) => bodyTokens.has(token)).length;
+  const lexical = Math.min(1, (titleMatches * 1.8 + allMatches) / Math.max(3, targetTokens.size));
+  return Math.max(lexical, candidate.searchScore ?? 0);
+}
+
+function credibilityScore(candidate: RawSearchResult): number {
+  let score = 0.45;
+  const signals = new Set(candidate.credibilitySignals ?? []);
+  if (signals.has("HTTPS")) score += 0.08;
+  if (signals.has("institutional-domain") || signals.has("government-domain")) score += 0.16;
+  if (signals.has("scholarly-index")) score += 0.22;
+  if (signals.has("DOI")) score += 0.08;
+  if (candidate.type === "paper" && candidate.provider) score += 0.05;
+  if (candidate.citationCount) score += Math.min(0.12, Math.log10(candidate.citationCount + 1) * 0.035);
+  if ((candidate.snippet ?? "").length >= 80) score += 0.04;
+  return Math.min(1, score);
+}
+
+function audienceFitScore(candidate: RawSearchResult, node: ConceptNode, profile?: LearnerProfile): number {
+  const education = (profile?.educationLevel ?? "high-school").toLowerCase();
+  const knowledge = profile?.knowledgeLevel ?? "beginner";
+  const purpose = profile?.purpose ?? "general-learning";
+  const introductory = ["elementary", "middle-school", "high-school"].includes(education)
+    || ["novice", "beginner"].includes(knowledge);
+  const advanced = ["graduate", "professional"].includes(education)
+    || ["advanced", "expert"].includes(knowledge)
+    || node.difficulty >= 4;
+
+  let score = 0.62;
+  if (introductory) {
+    if (["course", "video", "article"].includes(candidate.type)) score += 0.2;
+    if (candidate.type === "paper") score -= purpose === "research" ? 0.05 : 0.32;
+    if (candidate.type === "documentation" && purpose !== "project") score -= 0.08;
+  }
+  if (advanced) {
+    if (["paper", "documentation", "reference"].includes(candidate.type)) score += 0.18;
+  }
+  if (purpose === "project" && candidate.type === "documentation") score += 0.2;
+  if (purpose === "research" && candidate.type === "paper") score += 0.25;
+
+  const preferences = (profile?.preferredResourceTypes ?? []).join(" ").toLowerCase();
+  if (preferences && preferences.includes(candidate.type)) score += 0.12;
+  return Math.max(0, Math.min(1, score));
+}
+
+function deterministicResourceSelection(
+  candidates: ResourceCandidate[],
+  node: ConceptNode,
+  profile?: LearnerProfile,
+): ResourceCandidate[] {
+  const ranked = candidates
+    .map((candidate) => ({
+      candidate,
+      base:
+        relevanceScore(candidate, node) * 0.5
+        + credibilityScore(candidate) * 0.28
+        + audienceFitScore(candidate, node, profile) * 0.22,
+    }))
+    .sort((a, b) => b.base - a.base);
+
+  const selected: ResourceCandidate[] = [];
+  const hostCounts = new Map<string, number>();
+  const typeCounts = new Map<string, number>();
+  const providerCounts = new Map<string, number>();
+
+  while (selected.length < 5 && ranked.length) {
+    let bestIndex = 0;
+    let bestScore = Number.NEGATIVE_INFINITY;
+    for (let index = 0; index < ranked.length; index += 1) {
+      const item = ranked[index];
+      const host = resourceHost(item.candidate.url);
+      const hostPenalty = (hostCounts.get(host) ?? 0) * 0.18;
+      const typePenalty = (typeCounts.get(item.candidate.type) ?? 0) * 0.05;
+      const provider = item.candidate.provider ?? item.candidate.source;
+      const providerPenalty = (providerCounts.get(provider) ?? 0) * 0.04;
+      const diversityBonus = (hostCounts.has(host) ? 0 : 0.08) + (typeCounts.has(item.candidate.type) ? 0 : 0.04);
+      const score = item.base + diversityBonus - hostPenalty - typePenalty - providerPenalty;
+      if (score > bestScore) {
+        bestIndex = index;
+        bestScore = score;
+      }
+    }
+
+    const [{ candidate }] = ranked.splice(bestIndex, 1);
+    if (selected.length && bestScore < 0.32) break;
+    selected.push(candidate);
+    const host = resourceHost(candidate.url);
+    hostCounts.set(host, (hostCounts.get(host) ?? 0) + 1);
+    typeCounts.set(candidate.type, (typeCounts.get(candidate.type) ?? 0) + 1);
+    const provider = candidate.provider ?? candidate.source;
+    providerCounts.set(provider, (providerCounts.get(provider) ?? 0) + 1);
+  }
+
+  return selected;
 }
 
 export async function findResources(input: {
@@ -1518,72 +1641,90 @@ export async function findResources(input: {
 }): Promise<WorkflowEnvelope<{ resources: ResourceLink[]; summary: string }>> {
   const trace = new TraceCollector();
   const warnings: string[] = [];
-  const webSearchAvailable = Boolean(getEnv().TAVILY_API_KEY);
-  let plan: ResourceQueryPlan;
+  const env = getEnv();
+  const webSearchAvailable = Boolean(env.TAVILY_API_KEY || env.BRAVE_SEARCH_API_KEY);
+  const originAgent = input.node.level.axis === "depth" ? "concept_architect" : "learning_path";
 
-  if (getEnv().RESOURCE_PLANNING_MODE === "llm") {
-    try {
-      plan = (
-        await runtime.run<any, ResourceQueryPlan>(
-          "resource_agent",
-          { node: input.node, learnerProfile: input.learnerProfile, webSearchAvailable },
-          trace,
-        )
-      ).data;
-    } catch {
-      warnings.push("Resource planning used a deterministic fallback after the model planner was unavailable.");
-      plan = deterministicResourcePlan(input.node, webSearchAvailable, input.learnerProfile);
-      trace.add(
-        "agent_start",
-        "Resource Agent is using a deterministic search plan because model planning is unavailable.",
-        { agent: "resource_agent" },
-      );
-    }
-  } else {
-    plan = deterministicResourcePlan(input.node, webSearchAvailable, input.learnerProfile);
-    trace.add(
-      "agent_start",
-      "Resource Agent is using deterministic query routing to avoid an unnecessary model call.",
-      { agent: "resource_agent" },
-    );
-  }
+  runtime.handoff(originAgent, "resource_agent", trace, {
+    summary: `${originAgent === "concept_architect" ? "Concept Architect" : "Learning Path Agent"} handed ${input.node.title} to Resource Agent for learner-specific source discovery.`,
+    context: {
+      nodeId: input.node.id,
+      nodeTitle: input.node.title,
+      difficulty: input.node.difficulty,
+      difficultyLabel: input.node.difficultyLabel,
+      level: input.node.level,
+      learnerProfile: input.learnerProfile ?? null,
+    },
+  });
 
-  const candidates: RawSearchResult[] = [];
-  for (const query of plan.queries.slice(0, 5)) {
-    const tool = query.source === "institution"
-      ? "search_institution_resources"
-      : query.source === "academic"
-        ? "search_academic_resources"
-        : "search_web";
+  const plan = deterministicResourcePlan(input.node, webSearchAvailable, input.learnerProfile);
+  trace.add("agent_start", "Resource Agent created a source-neutral retrieval plan from the node and learner context.", {
+    agent: "resource_agent",
+    metadata: { queries: plan.queries.map((query) => ({ source: query.source, reason: query.reason })) },
+  });
 
+  const rawCandidates: RawSearchResult[] = [];
+  for (const query of plan.queries.slice(0, 4)) {
+    const tool = query.source === "academic" ? "search_academic_resources" : "search_web";
     try {
       const results = (await runtime.executeTool(
         "resource_agent",
         tool,
-        { query: query.query, limit: 4, domains: query.domains },
+        { query: query.query, limit: 6 },
         trace,
       )) as RawSearchResult[];
-      candidates.push(...results);
+      rawCandidates.push(...results);
     } catch (error) {
       warnings.push(`${tool} was unavailable for one query.`);
-      trace.add(
-        "error",
-        `${tool} failed: ${error instanceof Error ? error.message : String(error)}`,
-        { agent: "resource_agent" },
-      );
+      trace.add("error", `${tool} failed: ${error instanceof Error ? error.message : String(error)}`, {
+        agent: "resource_agent",
+      });
     }
   }
 
-  const seen = new Set<string>();
-  const selected = candidates
+  const seenUrls = new Set<string>();
+  const candidates: ResourceCandidate[] = rawCandidates
     .filter(safeCandidateUrl)
     .filter((candidate) => {
-      if (seen.has(candidate.url)) return false;
-      seen.add(candidate.url);
+      const key = candidate.url.replace(/\/$/, "").toLowerCase();
+      if (seenUrls.has(key)) return false;
+      seenUrls.add(key);
       return true;
     })
-    .sort((a, b) => resourcePriority(b, input.node, input.learnerProfile) - resourcePriority(a, input.node, input.learnerProfile))
-    .slice(0, 5);
+    .slice(0, 30)
+    .map((candidate, index) => ({ ...candidate, candidateId: `candidate-${index + 1}` }));
+
+  let selected = deterministicResourceSelection(candidates, input.node, input.learnerProfile);
+  let selectionSummary = "Selected with deterministic relevance, credibility, learner-fit, difficulty-fit, and diversity scoring.";
+
+  if (env.RESOURCE_PLANNING_MODE === "llm" && candidates.length) {
+    try {
+      const selection = (
+        await runtime.run<any, ResourceSelection>(
+          "resource_agent",
+          { node: input.node, learnerProfile: input.learnerProfile, candidates },
+          trace,
+        )
+      ).data;
+      const byId = new Map(candidates.map((candidate) => [candidate.candidateId, candidate]));
+      const validIds = [...new Set(selection.selected.map((item) => item.candidateId))];
+      const llmSelected = validIds
+        .map((id) => byId.get(id))
+        .filter((candidate): candidate is ResourceCandidate => Boolean(candidate))
+        .slice(0, 5);
+      if (llmSelected.length) {
+        selected = llmSelected;
+        selectionSummary = selection.summary;
+      } else {
+        warnings.push("Resource Agent returned no valid candidate IDs, so deterministic selection was used.");
+      }
+    } catch (error) {
+      warnings.push("Resource Agent selection fell back to deterministic scoring after the configured model was unavailable.");
+      trace.add("error", `Resource Agent model selection failed: ${error instanceof Error ? error.message : String(error)}`, {
+        agent: "resource_agent",
+      });
+    }
+  }
 
   const resources: ResourceLink[] = selected.map((candidate) => ({
     title: candidate.title,
@@ -1594,15 +1735,21 @@ export async function findResources(input: {
     verified: true,
   }));
 
-  trace.add("agent_finish", `Resource Agent selected ${resources.length} audience-matched resource links.`, {
+  trace.add("agent_finish", `Resource Agent selected ${resources.length} node-specific resource links from ${candidates.length} retrieved candidates.`, {
     agent: "resource_agent",
+    metadata: {
+      candidateCount: candidates.length,
+      selectedCandidateIds: selected.map((candidate) => candidate.candidateId),
+      distinctHosts: new Set(selected.map((candidate) => resourceHost(candidate.url))).size,
+      selectionMode: env.RESOURCE_PLANNING_MODE === "llm" ? "llm-with-deterministic-fallback" : "deterministic",
+    },
   });
 
   return {
     data: {
       resources,
       summary: resources.length
-        ? `Found ${resources.length} reputable resource${resources.length === 1 ? "" : "s"} matched to the learner and concept.`
+        ? `${selectionSummary} Found ${resources.length} credible resource${resources.length === 1 ? "" : "s"} matched to this node and learner.`
         : "No suitable external resources were available. The knowledge graph remains usable without them.",
     },
     trace: trace.list(),
@@ -1675,7 +1822,15 @@ Retrieved source evidence: ${JSON.stringify(evidence)}`,
         "concept_architect",
         "pedagogy_validator",
         trace,
-        "Concept Architect handed the source-grounded explanation to Pedagogy Validator for attribution review.",
+        {
+          summary: "Concept Architect handed the source-grounded explanation to Pedagogy Validator for attribution review.",
+          context: {
+            nodeId: input.node.id,
+            nodeTitle: input.node.title,
+            evidenceCount: verifiedExplanationEvidence.length,
+            sourceMode: sourceMode(input.learnerProfile),
+          },
+        },
       );
       sourceValidation = (await runtime.run<any, PedagogyValidation>(
         "pedagogy_validator",

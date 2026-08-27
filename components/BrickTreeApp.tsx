@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import type { ConceptEdge, ConceptNode, GraphLevelDescriptor, ResourceLink } from "@/lib/schemas/concept";
 import type { ExtractedDocument } from "@/lib/schemas/documents";
 import type { LearnerProfile as LearnerProfileType, LearningPathProposal } from "@/lib/schemas/learning-path";
@@ -1814,9 +1815,76 @@ function PersistentMiniMap({
   goal: string;
   onOpen: () => void;
 }) {
+  const mapRef = useRef<HTMLElement | null>(null);
+  const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
+  const [position, setPosition] = useState<{ left: number; top: number }>();
+
+  const clampPosition = useCallback((left: number, top: number) => {
+    const map = mapRef.current;
+    const width = map?.offsetWidth ?? 250;
+    const height = map?.offsetHeight ?? 168;
+    const margin = 8;
+    return {
+      left: Math.max(margin, Math.min(left, Math.max(margin, window.innerWidth - width - margin))),
+      top: Math.max(margin, Math.min(top, Math.max(margin, window.innerHeight - height - margin))),
+    };
+  }, []);
+
+  function startMapDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const map = mapRef.current;
+    if (!map) return;
+    const rect = map.getBoundingClientRect();
+    dragRef.current = {
+      pointerId: event.pointerId,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+    };
+    setPosition(clampPosition(rect.left, rect.top));
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+
+  function moveMap(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    setPosition(clampPosition(event.clientX - drag.offsetX, event.clientY - drag.offsetY));
+    event.preventDefault();
+  }
+
+  function endMapDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  useEffect(() => {
+    const onResize = () => setPosition((current) => current ? clampPosition(current.left, current.top) : current);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [clampPosition]);
+
   return (
-    <aside className={styles.persistentMap} aria-label={`${mode === "tree" ? "Tree" : "Brick"} mini map`}>
+    <aside
+      ref={mapRef}
+      className={styles.persistentMap}
+      aria-label={`${mode === "tree" ? "Tree" : "Brick"} mini map`}
+      style={position ? { left: position.left, top: position.top, right: "auto", bottom: "auto" } : undefined}
+    >
       <span className={styles.persistentMapTitle}>{mode === "tree" ? "Tree" : "Brick"} map</span>
+      <button
+        type="button"
+        className={styles.persistentMapDragHandle}
+        aria-label="Move mini map"
+        title="Drag to move mini map"
+        onPointerDown={startMapDrag}
+        onPointerMove={moveMap}
+        onPointerUp={endMapDrag}
+        onPointerCancel={endMapDrag}
+      >
+        <span aria-hidden="true">⠿</span>
+      </button>
       <MiniGraphMap
         mode={mode}
         nodes={nodes}
