@@ -242,11 +242,11 @@ export function BrickTreeApp() {
     .filter((node) => !(mode === "brick" && node.id === rootNode?.id && node.title === "Your Foundations")), [nodes, mode, rootNode?.id]);
 
   const focusNode = useMemo(() => {
-    const requested = focusedNodeId ?? selectedNodeId;
-    const requestedNode = requested ? nodes.find((node) => node.id === requested) : undefined;
+    if (!focusedNodeId) return undefined;
+    const requestedNode = nodes.find((node) => node.id === focusedNodeId);
     if (mode === "brick" && requestedNode && requestedNode.id === rootNode?.id && requestedNode.title === "Your Foundations") return undefined;
-    return requestedNode ?? (mode === "tree" ? rootNode : undefined);
-  }, [focusedNodeId, selectedNodeId, nodes, mode, rootNode]);
+    return requestedNode;
+  }, [focusedNodeId, nodes, mode, rootNode]);
 
   const nodeLevel = useCallback((node: ConceptNode) => {
     const offset = Math.max(0, node.depth - baseDepth);
@@ -420,7 +420,7 @@ export function BrickTreeApp() {
         setLevels(uniqueLevels([root.level, response.data.level]));
         setExpandedNodeIds(new Set([root.id]));
         setSelectedNodeId(root.id);
-        setFocusedNodeId(root.id);
+        setFocusedNodeId(undefined);
         setViewRootId(root.id);
         setLearningPath(undefined);
         setTrace(response.trace as AgentTraceEvent[]);
@@ -885,6 +885,12 @@ export function BrickTreeApp() {
             error={error}
             warnings={warnings}
             onFocus={(id) => selectNode(id, false)}
+            onClearFocus={() => {
+              setFocusedNodeId(undefined);
+              setSelectedNodeId(undefined);
+              setError(undefined);
+              setWarnings([]);
+            }}
             onContinue={(id) => { selectNode(id, false); void expandNode(id); }}
             onExplain={(id) => void explainNode(id, explanationLevel(profile))}
             onMarkKnown={markKnown}
@@ -1047,6 +1053,7 @@ function HierarchyStage({
   error,
   warnings,
   onFocus,
+  onClearFocus,
   onContinue,
   onExplain,
   onMarkKnown,
@@ -1070,6 +1077,7 @@ function HierarchyStage({
   error?: string;
   warnings: string[];
   onFocus: (id: string) => void;
+  onClearFocus: () => void;
   onContinue: (id: string) => void;
   onExplain: (id: string) => void;
   onMarkKnown: (id: string) => void;
@@ -1113,7 +1121,13 @@ function HierarchyStage({
   return (
     <section className={`${styles.hierarchyStage} ${mode === "tree" ? styles.treeStage : styles.brickStage}`}>
       <div ref={scrollerRef} className={styles.graphScroller} aria-label={`${mode === "tree" ? "Tree" : "Brick"} graph. Scroll vertically and horizontally; swipe on touch devices.`}>
-        <div className={styles.graphCanvas} style={{ width: layout.width, height: layout.height }}>
+        <div
+          className={styles.graphCanvas}
+          style={{ width: layout.width, height: layout.height }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) onClearFocus();
+          }}
+        >
           <svg className={styles.graphEdges} viewBox={`0 0 ${layout.width} ${layout.height}`} aria-hidden="true">
             {edges.map((edge) => {
               const source = layout.positions.get(edge.source);
