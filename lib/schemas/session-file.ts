@@ -32,6 +32,8 @@ const AdaptiveExplanationSchema = z.object({
   sourceSummary: z.string().optional(),
   example: z.string(),
   keyTakeaway: z.string(),
+  prerequisites: z.array(z.string()).max(8).optional(),
+  whatItUnlocks: z.array(z.string()).max(8).optional(),
   evidence: z.array(z.object({
     documentId: z.string(),
     sectionId: z.string(),

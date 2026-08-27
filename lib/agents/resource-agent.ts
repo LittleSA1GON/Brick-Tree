@@ -11,33 +11,40 @@ export type ResourcePlanInput = {
 
 export const resourcePlannerAgent: AgentSpec<ResourcePlanInput, ResourceQueryPlan> = {
   name: "resource_agent",
-  description: "Resource Agent is deciding which trustworthy sources to search for this concept.",
-  instructions: `You are Brick Tree's Resource Agent. Plan a small number of high-value searches for educational resources. Prefer authoritative or educational sources. Use Wikipedia for broad reference, academic search for research-oriented or advanced concepts, and web search only when configured and useful.
+  description: "Resource Agent is deciding which trustworthy scholarly and institutional sources to search for this concept.",
+  instructions: `You are Brick Tree's Resource Agent. Plan a small number of high-value searches for educational resources.
 
-Learner settings are semantic steering signals, not cosmetic formatting. Use knowledgeLevel, languageStyle, depthPreference, purpose, preferredResourceTypes, preferredExamples, and sourceMode to choose resources appropriate to the learner. A research learner may benefit from papers; a novice should usually receive clear introductory material before scholarly sources. If the learner requested documentation, courses, videos, or papers, reflect that in query wording when the source can support it.
+Never use Wikipedia. Prefer, in order:
+1. research papers and scholarly publication metadata,
+2. universities, government agencies, standards bodies, and research institutions,
+3. official documentation maintained by the organization responsible for a technology or subject,
+4. established educational institutions and reputable scholarly publishers.
+
+Use academic search for papers and research-oriented material. Use web search only when configured and useful for institutional explanations, official documentation, standards, courses, or tutorials.
+
+Learner settings are semantic steering signals, not cosmetic formatting. Use educationLevel, knowledgeLevel, languageStyle, depthPreference, purpose, preferredResourceTypes, preferredExamples, and sourceMode to choose resources appropriate to the learner. A novice should usually receive a clear institutional or official introduction before highly specialized papers; a research learner may receive papers first.
 
 Do not invent URLs; you only plan queries and source types.`,
   allowedTools: [
-    "search_wikipedia",
     "search_academic_resources",
     "search_web",
   ],
   allowedHandoffs: [],
-  maxSteps: 5,
+  maxSteps: 4,
   outputSchema: ResourceQueryPlanSchema,
   schemaName: "ResourceQueryPlan",
-  schemaHint: `JSON field queries: 1-5 items, each {query:string, source:'wikipedia'|'academic'|'web', reason:string}.`,
+  schemaHint: `JSON field queries: 1-5 items, each {query:string, source:'academic'|'web', reason:string}. Never use Wikipedia.`,
   buildUserPrompt(input) {
     return `Concept: ${input.node.title}
 Description: ${input.node.shortDescription}
 Difficulty: ${input.node.difficulty}/5 · ${input.node.difficultyLabel}
 Difficulty explanation: ${input.node.difficultyExplanation}
 Learner profile: ${JSON.stringify(input.learnerProfile ?? {})}
-General web search available: ${input.webSearchAvailable}
+Institutional web search available: ${input.webSearchAvailable}
 
 Preferred resource types: ${(input.learnerProfile?.preferredResourceTypes ?? []).join(", ") || "not specified"}
 Preferred examples: ${(input.learnerProfile?.preferredExamples ?? []).join(", ") || "not specified"}
 
-Plan only searches that add real learning value and fit the learner's requested level, vernacular, purpose, and resource preferences.`;
+Plan only searches that add real learning value. Prefer research papers, universities, government/research institutions, standards bodies, and official documentation. Never plan a Wikipedia search.`;
   },
 };

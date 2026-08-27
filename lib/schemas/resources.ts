@@ -1,7 +1,12 @@
 import { z } from "zod";
 
+/**
+ * Brick Tree deliberately excludes Wikipedia from external learning resources.
+ * Resource discovery is limited to scholarly metadata/search and curated web
+ * results from reputable institutions, standards bodies, official documentation,
+ * universities, government agencies, and established publishers.
+ */
 export const ResourceSourceSchema = z.enum([
-  "wikipedia",
   "academic",
   "web",
 ]);

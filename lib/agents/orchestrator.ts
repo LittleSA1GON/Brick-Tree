@@ -44,6 +44,8 @@ type ExplanationResponse = {
   sourceSummary?: string;
   example: string;
   keyTakeaway: string;
+  prerequisites: string[];
+  whatItUnlocks: string[];
   evidence: Array<{ documentId: string; sectionId: string; page?: number; heading?: string }>;
 };
 
@@ -52,6 +54,8 @@ const ExplanationResponseSchema = z.object({
   sourceSummary: z.string().max(2400).optional(),
   example: z.string().min(1).max(1800),
   keyTakeaway: z.string().min(1).max(700),
+  prerequisites: z.array(z.string().min(1).max(160)).max(6).default([]),
+  whatItUnlocks: z.array(z.string().min(1).max(180)).max(6).default([]),
   evidence: z.array(z.object({
     documentId: z.string(),
     sectionId: z.string(),
@@ -1414,14 +1418,26 @@ function deterministicResourcePlan(
   const purpose = profile?.purpose ?? "general-learning";
   const audience = `${education} ${level}`;
   const queries: ResourceQueryPlan["queries"] = [
-    { query: `${node.title} ${audience} overview`, source: "wikipedia", reason: "Broad reference and terminology matched to the learner's level." },
+    {
+      query: `${node.title} ${audience} research overview`,
+      source: "academic",
+      reason: "Use scholarly publication metadata and DOI-linked papers instead of crowd-edited reference pages.",
+    },
   ];
-  if (node.difficulty >= 4 || purpose === "research" || preferred.includes("paper")) {
-    queries.push({ query: `${node.title} research education overview`, source: "academic", reason: "Research-oriented or advanced learning can benefit from scholarly references." });
-  }
   if (webSearchAvailable) {
-    const preferenceTerms = preferred || (purpose === "project" ? "documentation tutorial" : "tutorial course official documentation");
-    queries.push({ query: `${node.title} ${audience} ${preferenceTerms}`, source: "web", reason: "Find practical material aligned with the learner's requested format and level." });
+    const preferenceTerms = preferred || (purpose === "project" ? "official documentation tutorial" : "university course official documentation");
+    queries.push({
+      query: `${node.title} ${audience} ${preferenceTerms}`,
+      source: "web",
+      reason: "Find learner-appropriate explanations from universities, government/research institutions, standards bodies, or official documentation.",
+    });
+  }
+  if (node.difficulty >= 4 || purpose === "research" || preferred.includes("paper")) {
+    queries.push({
+      query: `${node.title} recent research methods applications`,
+      source: "academic",
+      reason: "Advanced or research-oriented learners benefit from an additional scholarly search focused on methods and applications.",
+    });
   }
   return { queries };
 }
@@ -1464,11 +1480,9 @@ export async function findResources(input: {
 
   const candidates: RawSearchResult[] = [];
   for (const query of plan.queries.slice(0, 5)) {
-    const tool = query.source === "wikipedia"
-      ? "search_wikipedia"
-      : query.source === "academic"
-        ? "search_academic_resources"
-        : "search_web";
+    const tool = query.source === "academic"
+      ? "search_academic_resources"
+      : "search_web";
 
     try {
       const results = (await runtime.executeTool(
@@ -1489,16 +1503,36 @@ export async function findResources(input: {
   }
 
   const seen = new Set<string>();
-  const sourcePriority: Record<string, number> = { Crossref: 4, Wikipedia: 3, Tavily: 2 };
-  const selected = candidates
+  const sourcePriority = (source: string): number => {
+    if (source.startsWith("Crossref")) return 5;
+    if (source.endsWith(".edu") || source.endsWith(".gov") || source.includes(".ac.")) return 4;
+    if (source.includes("doi.org") || source.includes("arxiv.org") || source.includes("acm.org") || source.includes("ieee.org")) return 4;
+    return 3;
+  };
+  const uniqueCandidates = candidates
     .filter(safeCandidateUrl)
     .filter((candidate) => {
       if (seen.has(candidate.url)) return false;
       seen.add(candidate.url);
       return true;
     })
-    .sort((a, b) => (sourcePriority[b.source] ?? 0) - (sourcePriority[a.source] ?? 0))
-    .slice(0, 5);
+    .sort((a, b) => sourcePriority(b.source) - sourcePriority(a.source));
+
+  // Keep the resource tray useful for the learner rather than filling all five
+  // slots with papers when an institutional explanation is available. Research
+  // profiles get papers first; other profiles get official/institutional material
+  // first, then papers. Any remaining slots are filled from the verified pool.
+  const papers = uniqueCandidates.filter((candidate) => candidate.type === "paper");
+  const institutional = uniqueCandidates.filter((candidate) => candidate.type !== "paper");
+  const researchFirst = input.learnerProfile?.purpose === "research";
+  const preferred = researchFirst
+    ? [...papers.slice(0, 3), ...institutional.slice(0, 2)]
+    : [...institutional.slice(0, 3), ...papers.slice(0, 2)];
+  const selectedUrls = new Set(preferred.map((candidate) => candidate.url));
+  const selected = [
+    ...preferred,
+    ...uniqueCandidates.filter((candidate) => !selectedUrls.has(candidate.url)),
+  ].slice(0, 5);
 
   const resources: ResourceLink[] = selected.map((candidate) => ({
     title: candidate.title,
@@ -1552,20 +1586,23 @@ export async function explainConcept(input: {
   const result = await provider.generateStructured<ExplanationResponse>({
     system: `You adapt an existing concept explanation to a requested learner level and language style. Preserve the concept's meaning. Do not introduce unsupported URLs.
 
-If source evidence is provided, distinguish "what the source says" from your general educational explanation. In uploaded-only mode, do not make factual claims that cannot be supported by the evidence. Return evidence identifiers only when they appear in the supplied evidence metadata.`,
+If source evidence is provided, distinguish "what the source says" from your general educational explanation. In uploaded-only mode, do not make factual claims that cannot be supported by the evidence. Return evidence identifiers only when they appear in the supplied evidence metadata.
+
+Also refresh the node's learning context. Return 0-6 concise prerequisites that are genuinely useful before this concept, and 0-6 concise concepts/capabilities this node directly unlocks. Do not invent filler. If there is no meaningful prerequisite or unlock, return an empty array.`,
     user: `Concept: ${input.node.title}
 Base description: ${input.node.shortDescription}
 Why it matters: ${input.node.whyItMatters ?? ""}
 Why it is difficult: ${input.node.difficultyExplanation}
 Difficulty factors: ${input.node.difficultyFactors.join(", ")}
-Prerequisites: ${input.node.prerequisites.join(", ")}
+Existing prerequisite hints: ${input.node.prerequisites.join(", ")}
+Existing unlock hints: ${(input.node.whatItUnlocks ?? []).join(", ")}
 Requested explanation level: ${input.level}
 Learner/session profile: ${JSON.stringify(input.learnerProfile ?? {})}
 Source mode: ${sourceMode(input.learnerProfile)}
 Retrieved source evidence: ${JSON.stringify(evidence)}`,
     schema: ExplanationResponseSchema,
     schemaName: "AdaptiveExplanation",
-    schemaHint: "JSON fields: explanation:string, sourceSummary?:string, example:string, keyTakeaway:string, evidence:[{documentId,sectionId,page?,heading?}].",
+    schemaHint: "JSON fields: explanation:string, sourceSummary?:string, example:string, keyTakeaway:string, prerequisites:string[], whatItUnlocks:string[], evidence:[{documentId,sectionId,page?,heading?}]. Use empty arrays instead of generic placeholder text.",
     temperature: 0.25,
   });
   const verifiedExplanationEvidence = verifiedEvidenceReferences(result.data.evidence ?? [], evidence);

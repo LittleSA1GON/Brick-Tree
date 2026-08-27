@@ -11,6 +11,8 @@ export type AdaptiveExplanation = {
   sourceSummary?: string;
   example: string;
   keyTakeaway: string;
+  prerequisites?: string[];
+  whatItUnlocks?: string[];
   evidence?: Array<{ documentId: string; sectionId: string; page?: number; heading?: string }>;
 };
 

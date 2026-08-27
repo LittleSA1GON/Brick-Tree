@@ -1138,8 +1138,11 @@ function HierarchyStage({
     nodeGap: mode === "tree" ? 300 : 320,
     rowGap: mode === "tree" ? 178 : 176,
     // Real canvas buffer keeps focused cards readable at every edge.
-    paddingX: 360,
-    paddingY: mode === "tree" ? 340 : 380,
+    // Expanded cards can reach ~760px wide / ~840px tall. These margins are
+    // real canvas space (not just scroll-padding), so edge nodes can always be
+    // scrolled completely into view on laptops, phones, and short windows.
+    paddingX: 540,
+    paddingY: mode === "tree" ? 540 : 600,
     destinationOffset: destination ? 126 : 0,
   }), [mode, nodes, edges, destination]);
 
@@ -1525,6 +1528,13 @@ function KnowledgeNode({
   onBrickFromHere: () => void;
   onDismissMessages: () => void;
 }) {
+  const contextualPrerequisites = explanation?.prerequisites?.length
+    ? explanation.prerequisites
+    : node.prerequisites;
+  const contextualUnlocks = explanation?.whatItUnlocks?.length
+    ? explanation.whatItUnlocks
+    : (node.whatItUnlocks ?? []);
+
   return (
     <article className={`${styles.knowledgeNode} ${selected ? styles.nodeSelected : ""}`}>
       <div className={styles.nodeMeta}>
@@ -1556,7 +1566,14 @@ function KnowledgeNode({
       <details
         className={styles.nodeDetails}
         onToggle={(event) => {
-          if (event.currentTarget.open && !explanation) onExplain();
+          if (!event.currentTarget.open) return;
+          if (!explanation) onExplain();
+          // Opening a detail card changes both its width and height. Recenter it
+          // after layout so the graph scroller can expose every edge of the card.
+          const details = event.currentTarget;
+          window.setTimeout(() => {
+            details.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+          }, 60);
         }}
       >
         <summary>{explanationLoading ? "Loading detail…" : "Open detail + resources"}</summary>
@@ -1570,16 +1587,26 @@ function KnowledgeNode({
 
           {node.whyItMatters ? <section><h3>Why this node matters</h3><p>{node.whyItMatters}</p></section> : null}
 
-          <div className={styles.detailGrid}>
-            <section>
-              <h3>Prerequisites</h3>
-              {node.prerequisites.length ? <ul>{node.prerequisites.slice(0, 6).map((item) => <li key={item}>{item}</li>)}</ul> : <p>None listed yet.</p>}
-            </section>
-            <section>
-              <h3>{mode === "tree" ? "What this branch reveals" : "What this brick unlocks"}</h3>
-              {node.whatItUnlocks?.length ? <ul>{node.whatItUnlocks.slice(0, 6).map((item) => <li key={item}>{item}</li>)}</ul> : <p>{mode === "tree" ? "Branch this node to cut it one level deeper." : "Construct the next layer to see what becomes reachable."}</p>}
-            </section>
-          </div>
+          {contextualPrerequisites.length || contextualUnlocks.length ? (
+            <div className={styles.detailGrid}>
+              {contextualPrerequisites.length ? (
+                <section>
+                  <h3>Useful prerequisites</h3>
+                  <ul>
+                    {contextualPrerequisites.slice(0, 6).map((item) => <li key={item}>{item}</li>)}
+                  </ul>
+                </section>
+              ) : null}
+              {contextualUnlocks.length ? (
+                <section>
+                  <h3>{mode === "tree" ? "What this cut exposes next" : "What this brick enables next"}</h3>
+                  <ul>
+                    {contextualUnlocks.slice(0, 6).map((item) => <li key={item}>{item}</li>)}
+                  </ul>
+                </section>
+              ) : null}
+            </div>
+          ) : null}
 
           <section>
             <div className={styles.resourceHeader}>

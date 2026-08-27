@@ -2111,3 +2111,37 @@
   .knowledgeNode:has(.nodeDetails[open]) { width: 760px; }
   .persistentMap { width: 260px; height: 176px; }
 }
+
+/* 0.8.5 readable edge buffer.
+   The hierarchy layout supplies real canvas padding; these scroll margins make
+   expanded cards recenter cleanly and preserve extra vertical room above/below
+   the focused node instead of pinning it against the viewport edge. */
+.graphScroller {
+  scroll-padding:
+    clamp(180px, 34dvh, 440px)
+    clamp(140px, 26vw, 440px);
+}
+
+.graphNodeWrapper {
+  scroll-margin-block: clamp(180px, 32dvh, 420px);
+  scroll-margin-inline: clamp(120px, 22vw, 380px);
+}
+
+.graphNodeWrapper .knowledgeNode,
+.graphNodeWrapper .knowledgeNode:has(.nodeDetails[open]) {
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+}
+
+@media (max-width: 700px) {
+  .graphScroller {
+    scroll-padding:
+      clamp(130px, 26dvh, 260px)
+      clamp(70px, 18vw, 150px);
+  }
+
+  .graphNodeWrapper {
+    scroll-margin-block: clamp(130px, 25dvh, 240px);
+    scroll-margin-inline: clamp(60px, 16vw, 120px);
+  }
+}
