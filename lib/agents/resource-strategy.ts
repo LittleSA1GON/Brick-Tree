@@ -1,4 +1,4 @@
-import type { ResourceLink } from "@/lib/schemas/concept";
+import type { ConceptNode, ResourceLink } from "@/lib/schemas/concept";
 import type { ResourceNodeContext } from "@/lib/schemas/resources";
 import type { LearnerProfile } from "@/lib/schemas/learning-path";
 
@@ -15,6 +15,26 @@ export type ResourceStrategy = {
 };
 
 const resourceTypes: ResourceType[] = ["article", "video", "course", "documentation", "reference", "paper"];
+
+type ResourceStrategyNode = ResourceNodeContext | ConceptNode;
+
+function normalizeResourceStrategyNode(node: ResourceStrategyNode): ResourceNodeContext {
+  if ("axis" in node) return node;
+
+  return {
+    id: node.id,
+    title: node.title,
+    shortDescription: node.shortDescription,
+    axis: node.level.axis,
+    difficulty: node.difficulty,
+    difficultyLabel: node.difficultyLabel,
+    difficultyExplanation: node.difficultyExplanation,
+    difficultyFactors: node.difficultyFactors,
+    learningOutcomes: node.learningOutcomes,
+    applications: node.applications,
+    examples: node.examples,
+  };
+}
 
 function clamp(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -46,7 +66,8 @@ function nodeText(node: ResourceNodeContext): string {
   ].join(" ").toLowerCase();
 }
 
-export function buildResourceStrategy(node: ResourceNodeContext, profile?: LearnerProfile): ResourceStrategy {
+export function buildResourceStrategy(nodeInput: ResourceStrategyNode, profile?: LearnerProfile): ResourceStrategy {
+  const node = normalizeResourceStrategyNode(nodeInput);
   const purpose = profile?.purpose ?? "general-learning";
   const knowledge = profile?.knowledgeLevel ?? "beginner";
   const depth = profile?.depthPreference ?? "balanced";

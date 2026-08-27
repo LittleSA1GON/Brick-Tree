@@ -7,6 +7,12 @@ Brick Tree is a stateless learning map with two separate directions:
 - **Tree** cuts a concept into branches, traces prerequisites, or examines a broad question.
 - **Brick** starts from known foundations and constructs reachable knowledge upward, either by exploring or building toward a destination.
 
+## 0.8.6 resource strategy type-contract fix
+
+- `buildResourceStrategy` accepts either the compact `ResourceNodeContext` sent over the API or a full `ConceptNode`.
+- Full nodes are normalized internally (`node.level.axis` -> `axis`) without expanding the resource API payload.
+- Keeps the existing resource-adaptation tests as a regression check for full-node callers.
+
 ## 0.8.5 node resources + API efficiency
 
 - **Prerequisite/unlock filler is removed from Tree and Brick detail.** Node detail now stays focused on the explanation, why the node matters, adaptive resources, and actions that actually change the graph.
