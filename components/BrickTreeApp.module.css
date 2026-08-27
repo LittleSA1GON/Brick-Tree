@@ -2351,39 +2351,113 @@
   }
 }
 
-/* 0.8.7 starting-node viewport scaling.
-   The setup node now changes as a complete surface with both viewport width and
-   viewport height. The previous 820px ceiling made common desktop window sizes
-   look nearly identical, so width and height now remain fluid over a much wider
-   range. */
+/* 0.8.8 unified starting-node position and viewport fit.
+   Tree and Brick begin at the same visual level. The setup surface uses the
+   available hierarchy viewport rather than 100dvh, so its complete outer card
+   always remains visible while its contents can scroll internally when a very
+   short screen cannot display every optional field at once. */
 .setupSection {
   box-sizing: border-box;
-  min-height: 100dvh;
-  min-width: 100%;
-  padding-inline:
-    max(
-      calc(var(--rail-w, 60px) + var(--edge-x, 18px) + 16px),
-      clamp(18px, 5vw, 104px)
-    );
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding:
+    clamp(8px, 2.2vh, 24px)
+    clamp(8px, 2.5vw, 30px);
+  overflow: hidden;
+}
+
+/* setupTop/setupBottom are retained for compatibility with older saved CSS
+   references, but both resolve to the same level now. */
+.setupTop,
+.setupBottom {
+  align-items: center;
 }
 
 .setupNode {
   box-sizing: border-box;
-  width: clamp(300px, 58vw, 980px);
-  height: clamp(400px, 68dvh, 780px);
+  width: min(clamp(320px, 58vw, 980px), calc(100% - 8px));
+  height: min(82%, 780px);
+  min-width: 0;
   min-height: 0;
-  max-width: calc(100vw - var(--rail-w, 60px) - (var(--edge-x, 18px) * 2) - 20px);
-  max-height: calc(100dvh - var(--top-ui-h, 48px) - (var(--edge-y, 18px) * 2) - 28px);
-  padding: clamp(15px, min(2.25vw, 3.5vh), 36px);
-  border-radius: clamp(17px, min(1.8vw, 2.8vh), 30px);
+  max-width: 100%;
+  max-height: calc(100% - 4px);
+  padding: clamp(14px, min(2.1vw, 3.1vh), 32px);
+  border-radius: clamp(17px, min(1.7vw, 2.6vh), 28px);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
 
-/* Keep the primary action reachable even when a short window forces the setup
-   content to scroll inside the node. */
+.setupNode .nodeMeta {
+  gap: clamp(7px, .8vw, 11px);
+  margin-bottom: clamp(11px, 1.8vh, 20px);
+}
+
+.setupNode .nodeMeta span,
+.setupNode .nodeMeta b {
+  min-height: clamp(22px, 3.2vh, 28px);
+  padding-inline: clamp(8px, .8vw, 11px);
+  font-size: clamp(9px, min(.72vw, 1.4vh), 11px);
+}
+
+.setupHeader {
+  gap: clamp(12px, 2vw, 24px);
+}
+
+.setupHeader p {
+  margin-bottom: clamp(4px, .8vh, 8px);
+  font-size: clamp(8px, min(.68vw, 1.3vh), 10px);
+}
+
+.setupHeader h2 {
+  font-size: clamp(26px, min(3.8vw, 5.8vh), 52px);
+  line-height: 1.02;
+}
+
+.setupForm {
+  gap: clamp(9px, min(1.3vw, 1.9vh), 16px);
+  margin-top: clamp(14px, 2.6vh, 26px);
+}
+
+.setupForm label {
+  gap: clamp(5px, .8vh, 8px);
+  font-size: clamp(11px, min(.84vw, 1.6vh), 13px);
+}
+
+.setupForm input,
+.setupForm select {
+  min-height: clamp(40px, 5.8vh, 50px);
+  padding-inline: clamp(10px, 1vw, 14px);
+  border-radius: clamp(10px, 1vw, 13px);
+  font-size: clamp(12px, min(.9vw, 1.7vh), 15px);
+}
+
+.setupForm textarea {
+  min-height: clamp(64px, 9.5vh, 94px);
+  padding: clamp(9px, 1.1vw, 14px);
+  border-radius: clamp(10px, 1vw, 13px);
+  font-size: clamp(12px, min(.9vw, 1.7vh), 15px);
+}
+
+.setupAdvanced > summary {
+  padding: clamp(10px, 1.3vh, 14px) clamp(11px, 1.1vw, 16px);
+  font-size: clamp(11px, min(.84vw, 1.6vh), 13px);
+}
+
+.primaryAction {
+  min-height: clamp(44px, 6.2vh, 54px);
+  padding-inline: clamp(14px, 1.4vw, 20px);
+  font-size: clamp(12px, min(.9vw, 1.7vh), 15px);
+}
+
+/* Keep the action available when the card contents need to scroll, without
+   allowing the setup card itself to leave the visible workspace. */
 .setupNode .primaryAction {
   position: sticky;
   bottom: 0;
@@ -2391,55 +2465,99 @@
   box-shadow: 0 -12px 24px rgba(8, 10, 9, .82);
 }
 
-/* Wide / ultrawide displays should visibly grow the setup surface instead of
-   stopping at the former desktop cap. */
+/* Tall / large displays can grow the card while Tree and Brick remain aligned. */
 @media (min-width: 1600px) and (min-height: 850px) {
   .setupNode {
-    width: clamp(840px, 52vw, 1080px);
-    height: clamp(620px, 70dvh, 860px);
+    width: min(1080px, calc(100% - 16px));
+    height: min(80%, 860px);
   }
 }
 
-/* Short landscape windows scale primarily from height so the node never runs
-   below the viewport. */
+/* Short landscape windows keep the complete card shell visible and compress
+   controls inside it instead of pushing the Brick start lower than Tree. */
 @media (max-height: 720px) and (min-width: 701px) {
   .setupSection {
-    padding-top: calc(var(--top-ui-h, 48px) + 20px);
-    padding-bottom: max(20px, var(--edge-y, 12px));
+    padding: 6px clamp(8px, 2vw, 20px);
   }
 
   .setupNode {
-    width: clamp(420px, 52vw, 760px);
-    height: calc(100dvh - var(--top-ui-h, 48px) - 48px);
-    max-height: none;
-    padding: clamp(13px, 2.4vh, 20px);
+    width: min(760px, calc(100% - 8px));
+    height: calc(100% - 4px);
+    max-height: calc(100% - 4px);
+    padding: clamp(11px, 2vh, 18px);
+  }
+
+  .setupHeader h2 {
+    font-size: clamp(23px, min(3.3vw, 5.7vh), 40px);
+  }
+
+  .setupForm {
+    margin-top: clamp(10px, 2vh, 16px);
+    gap: 8px;
+  }
+
+  .setupForm textarea {
+    min-height: 58px;
   }
 }
 
-/* Phones/tablets follow the available screen almost edge-to-edge. Both width
-   and height remain fluid, so rotating the device changes the node itself. */
+/* Phones and portrait tablets use the same centered start level and keep the
+   complete outer node inside the available hierarchy viewport. */
 @media (max-width: 700px) {
   .setupSection {
-    padding:
-      calc(var(--top-ui-h, 44px) + 22px)
-      max(10px, var(--edge-x, 10px))
-      max(22px, var(--edge-y, 10px))
-      calc(var(--rail-w, 42px) + 8px);
+    padding: 4px;
   }
 
   .setupNode {
-    width: min(94vw, 640px);
-    height: clamp(390px, 76dvh, 720px);
-    max-width: calc(100vw - var(--rail-w, 42px) - 18px);
-    max-height: calc(100dvh - var(--top-ui-h, 44px) - 36px);
-    padding: clamp(13px, 4vw, 22px);
+    width: calc(100% - 4px);
+    height: calc(100% - 4px);
+    max-width: calc(100% - 4px);
+    max-height: calc(100% - 4px);
+    padding: clamp(12px, 3.8vw, 20px);
+    border-radius: clamp(15px, 4.5vw, 22px);
+  }
+
+  .setupHeader h2 {
+    font-size: clamp(24px, 7.8vw, 38px);
+  }
+
+  .setupForm {
+    grid-template-columns: 1fr;
+  }
+
+  .setupForm > * {
+    grid-column: 1 !important;
+  }
+
+  .setupForm input,
+  .setupForm select {
+    min-height: clamp(42px, 6.5vh, 48px);
+  }
+
+  .setupForm textarea {
+    min-height: clamp(62px, 10vh, 88px);
   }
 }
 
-@media (max-width: 430px) {
+@media (max-width: 430px), (max-height: 520px) {
   .setupNode {
-    width: calc(100vw - var(--rail-w, 42px) - 16px);
-    height: calc(100dvh - var(--top-ui-h, 44px) - 30px);
-    max-height: none;
+    padding: 11px;
+  }
+
+  .setupNode .nodeMeta {
+    margin-bottom: 9px;
+  }
+
+  .setupHeader h2 {
+    font-size: clamp(21px, 7.2vw, 30px);
+  }
+
+  .setupForm {
+    margin-top: 11px;
+    gap: 7px;
+  }
+
+  .setupForm textarea {
+    min-height: 54px;
   }
 }

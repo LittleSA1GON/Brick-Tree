@@ -847,7 +847,7 @@ export function BrickTreeApp() {
 
       <div className={styles.hierarchyViewport}>
         {!nodes.length ? (
-          <section className={`${styles.setupSection} ${mode === "brick" ? styles.setupBottom : styles.setupTop}`}>
+          <section className={styles.setupSection}>
             <SetupNode
               mode={mode}
               treeIntent={treeIntent}
