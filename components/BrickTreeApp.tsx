@@ -443,7 +443,10 @@ export function BrickTreeApp() {
         setLevels(uniqueLevels([root.level, response.data.level]));
         setExpandedNodeIds(new Set([root.id]));
         setSelectedNodeId(root.id);
-        setFocusedNodeId(root.id);
+        // Brick starts from the foundation row at the bottom in its compact state.
+        // Nothing is auto-focused here, otherwise scrollIntoView would pull the
+        // initial construction away from its bottom-origin starting position.
+        setFocusedNodeId(undefined);
         setViewRootId(root.id);
         setLearningPath(response.data.learningPath);
         setTrace(response.trace as AgentTraceEvent[]);
@@ -1097,8 +1100,9 @@ function HierarchyStage({
   const layout = useMemo(() => buildHierarchyLayout(mode, nodes, edges, {
     nodeGap: 190,
     rowGap: mode === "tree" ? 178 : 168,
-    paddingX: 220,
-    paddingY: mode === "tree" ? 92 : 110,
+    // Real canvas buffer keeps focused cards readable at every edge.
+    paddingX: 360,
+    paddingY: mode === "tree" ? 340 : 380,
     destinationOffset: destination ? 126 : 0,
   }), [mode, nodes, edges, destination]);
 
@@ -1128,6 +1132,13 @@ function HierarchyStage({
             if (event.target === event.currentTarget) onClearFocus();
           }}
         >
+          <div
+            className={`${styles.graphPlane} ${mode === "brick" ? styles.graphPlaneBrick : styles.graphPlaneTree}`}
+            style={{ width: layout.width, height: layout.height }}
+            onClick={(event) => {
+              if (event.target === event.currentTarget) onClearFocus();
+            }}
+          >
           <svg className={styles.graphEdges} viewBox={`0 0 ${layout.width} ${layout.height}`} aria-hidden="true">
             {edges.map((edge) => {
               const source = layout.positions.get(edge.source);
@@ -1213,6 +1224,7 @@ function HierarchyStage({
               </div>
             );
           })}
+          </div>
         </div>
       </div>
       <div className={styles.navigationHint}>
