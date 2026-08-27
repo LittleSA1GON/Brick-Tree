@@ -7,6 +7,7 @@ const read = (file: string) => fs.readFileSync(path.join(root, file), "utf8");
 
 const orchestrator = read("lib/agents/orchestrator.ts");
 const resourceAgent = read("lib/agents/resource-agent.ts");
+const resourceStrategy = read("lib/agents/resource-strategy.ts");
 const resources = read("lib/schemas/resources.ts");
 const toolIndex = read("lib/tools/index.ts");
 const webTool = read("lib/tools/implementations/web-search.ts");
@@ -44,12 +45,18 @@ describe("source-neutral, learner-aware resource quality", () => {
     expect(resourceAgent).toContain("SELECTION, not URL generation");
     expect(resourceAgent).toContain("Source-neutrality rule");
     expect(resourceAgent).toContain("Learner fit");
-    expect(resourceAgent).toContain("Difficulty fit");
+    expect(resourceAgent).toContain("Difficulty and task fit");
     expect(resourceAgent).toContain("Diversity");
     expect(orchestrator).toContain("relevanceScore");
     expect(orchestrator).toContain("credibilityScore");
     expect(orchestrator).toContain("audienceFitScore");
+    expect(orchestrator).toContain("resourceTypeFit");
     expect(orchestrator).toContain("deterministicResourceSelection");
+    expect(orchestrator).toContain("enforceResourceMix");
     expect(orchestrator).toContain("distinctHosts");
+    expect(resourceStrategy).toContain("maxPapers");
+    expect(resourceStrategy).toContain("academicSearch");
+    expect(resourceStrategy).toContain("implementationSignal");
+    expect(resourceAgent).toContain("higher difficulty with research papers");
   });
 });

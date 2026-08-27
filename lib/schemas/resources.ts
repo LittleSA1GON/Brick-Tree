@@ -11,7 +11,7 @@ export const ResourceQueryPlanSchema = z.object({
         reason: z.string().min(1).max(300),
       }),
     )
-    .min(1)
+    .min(0)
     .max(6),
 });
 export type ResourceQueryPlan = z.infer<typeof ResourceQueryPlanSchema>;

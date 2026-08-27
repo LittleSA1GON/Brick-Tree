@@ -7,8 +7,13 @@ Brick Tree is a stateless learning map with two separate directions:
 - **Tree** cuts a concept into branches, traces prerequisites, or examines a broad question.
 - **Brick** starts from known foundations and constructs reachable knowledge upward, either by exploring or building toward a destination.
 
-## 0.8.3 reliability updates
+## 0.8.4 adaptive resource updates
 
+- Adaptive resources now separate **difficulty** from **resource format**: harder nodes receive deeper material, but do not automatically receive research papers.
+- Conceptual nodes favor clear explanations/courses/videos; procedural class/exam nodes favor worked examples and practice; implementation/project nodes favor documentation and references; advanced established concepts favor deep reference material; research/evidence nodes may include papers.
+- Academic retrieval is no longer a generic fallback when web search is unavailable. If papers are not appropriate for the node, the system returns no external resource rather than filling the panel with irrelevant scholarly results.
+- Scholarly indexing and citation counts remain credibility evidence, but their deterministic ranking bonus is intentionally smaller than exact relevance and resource-type fit.
+- Both deterministic and LLM selection enforce the adaptive maximum-paper budget, so an LLM cannot reintroduce a paper-heavy result set.
 - All native dropdowns use one explicit dark palette so selected values and option menus remain readable.
 - Brick accepts free-form foundation prose, sends the raw statement to the Learning Path Agent, and keeps a deterministic schema-safe fallback parser. Negated knowledge is not marked as known, and starting-from-scratch statements are supported.
 - Learning Path output normalizes harmless model shape variations such as an object returned where a text field was expected, preventing Groq formatting differences from aborting an otherwise usable path.
@@ -240,3 +245,8 @@ one resource lookup
 one document upload
 session export/import
 ```
+
+
+## Adaptive resource selection
+
+Resource discovery uses a difficulty- and task-adaptive resource strategy. Difficulty controls depth, while the node content and learner goal control format: introductory/conceptual nodes favor explanations, courses, and videos; procedural/class/exam nodes favor worked examples and practice; implementation/project nodes favor documentation and references; established advanced concepts favor deep references; and research papers are retrieved only when research/evidence intent, explicit paper preference, or a deliberate academic deep-dive warrants them. Scholarly indexing is treated as a credibility signal, not as an automatic ranking advantage.

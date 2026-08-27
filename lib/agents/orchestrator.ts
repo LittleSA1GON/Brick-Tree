@@ -34,6 +34,7 @@ import type { RawSearchResult, ResourceCandidate, ResourceQueryPlan, ResourceSel
 import type { RetrievedChunk } from "@/lib/schemas/documents";
 import { evidenceCoverageFindings, verifiedEvidenceReferences } from "@/lib/documents/provenance";
 import { learnerFitIssues } from "@/lib/learning/learner-fit";
+import { buildResourceStrategy, resourceTypeFit, type ResourceStrategy } from "@/lib/agents/resource-strategy";
 
 const agents = createAgentRegistry();
 const tools = createToolRegistry();
@@ -1476,70 +1477,75 @@ function safeCandidateUrl(candidate: RawSearchResult): boolean {
   }
 }
 
-function isResearchAudience(node: ConceptNode, profile?: LearnerProfile): boolean {
-  const education = (profile?.educationLevel ?? "high-school").toLowerCase();
-  const level = profile?.knowledgeLevel ?? "beginner";
-  const purpose = profile?.purpose ?? "general-learning";
-  const preferred = profile?.preferredResourceTypes ?? [];
-  const explicitlyWantsResearch = purpose === "research"
-    || preferred.some((item) => /paper|research|journal/i.test(item));
-  const introductoryLearner = ["elementary", "middle-school", "high-school"].includes(education)
-    || ["novice", "beginner"].includes(level);
+function compactSearchQuery(...parts: string[]): string {
+  return parts.join(" ").replace(/\s+/g, " ").trim().slice(0, 280).trim();
+}
 
-  if (introductoryLearner && !explicitlyWantsResearch && node.difficulty < 4) return false;
-  return explicitlyWantsResearch
-    || node.difficulty >= 4
-    || ["graduate", "professional"].includes(education)
-    || ["advanced", "expert"].includes(level);
+function typeSearchTerms(strategy: ResourceStrategy): string {
+  const terms: Record<string, string> = {
+    article: "clear explanation guide",
+    video: "video lecture walkthrough",
+    course: "tutorial lesson course",
+    documentation: "official documentation implementation guide",
+    reference: "reference handbook textbook guide",
+    paper: "research paper study",
+  };
+  return strategy.targetTypes.map((type) => terms[type]).join(" ");
 }
 
 function deterministicResourcePlan(
   node: ConceptNode,
   webSearchAvailable: boolean,
-  profile?: LearnerProfile,
+  profile: LearnerProfile | undefined,
+  strategy: ResourceStrategy,
 ): ResourceQueryPlan {
-  const preferred = (profile?.preferredResourceTypes ?? []).join(" ").trim();
   const level = profile?.knowledgeLevel ?? "beginner";
   const education = profile?.educationLevel ?? "high-school";
   const purpose = profile?.purpose ?? "general-learning";
   const audience = `${education} ${level}`;
-  const researchAudience = isResearchAudience(node, profile);
   const queries: ResourceQueryPlan["queries"] = [];
 
   if (webSearchAvailable) {
     queries.push({
-      query: `${node.title} ${audience} ${purpose} ${preferred || "explanation tutorial course guide"}`,
+      query: compactSearchQuery(node.title, audience, typeSearchTerms(strategy)),
       source: "web",
-      reason: "Retrieve a broad web pool for learner-level explanations and instruction without restricting results to preferred domains.",
+      reason: `Find ${strategy.targetTypes.join(", ")} resources that match the node's ${node.difficulty}/5 difficulty and the learner's level.`,
     });
-    if (purpose === "project" || profile?.exploreBias === "technical" || /documentation|reference/i.test(preferred)) {
+
+    const intentQuery: Record<ResourceStrategy["intent"], string> = {
+      conceptual: compactSearchQuery(node.title, "explained examples overview", audience),
+      procedural: compactSearchQuery(node.title, "worked examples practice step by step", audience),
+      implementation: compactSearchQuery(node.title, "official documentation implementation examples", audience),
+      reference: compactSearchQuery(node.title, "reference handbook deep guide", audience),
+      research: compactSearchQuery(node.title, "technical overview evidence review", audience),
+    };
+    queries.push({
+      query: intentQuery[strategy.intent],
+      source: "web",
+      reason: `Add a complementary ${strategy.intent} resource pool instead of assuming one format fits every difficult concept.`,
+    });
+
+    const preferred = (profile?.preferredResourceTypes ?? []).join(" ").trim();
+    if (preferred) {
       queries.push({
-        query: `${node.title} official documentation technical guide reference ${audience}`,
+        query: compactSearchQuery(node.title, preferred, audience),
         source: "web",
-        reason: "Add primary or technical material when the learner's purpose benefits from direct references.",
+        reason: "Respect the learner's explicit resource-format preference when relevant material exists.",
       });
-    } else if (["elementary", "middle-school", "high-school"].includes(education) || ["novice", "beginner"].includes(level)) {
+    } else if (purpose === "class" || purpose === "exam") {
       queries.push({
-        query: `${node.title} worked examples practice visual explanation ${audience}`,
+        query: compactSearchQuery(node.title, "practice problems worked examples lesson", audience),
         source: "web",
-        reason: "Add approachable practice-oriented material for an introductory learner.",
+        reason: "Class and exam goals benefit from instruction plus practice, not research literature by default.",
       });
     }
   }
 
-  if (researchAudience) {
+  if (strategy.academicSearch) {
     queries.push({
-      query: `${node.title} ${purpose === "research" ? "research" : "scholarly overview"}`,
+      query: compactSearchQuery(node.title, purpose === "research" ? "research evidence literature" : "scholarly evidence review"),
       source: "academic",
-      reason: "Retrieve scholarly candidates only when the node difficulty or learner context makes academic literature useful.",
-    });
-  }
-
-  if (!queries.length) {
-    queries.push({
-      query: `${node.title} scholarly overview`,
-      source: "academic",
-      reason: "Use open scholarly indexes as the available neutral retrieval pool when no web-search key is configured.",
+      reason: `Add scholarly literature because this node/learner context calls for it; cap selected papers at ${strategy.maxPapers}.`,
     });
   }
 
@@ -1571,14 +1577,13 @@ function relevanceScore(candidate: RawSearchResult, node: ConceptNode): number {
 }
 
 function credibilityScore(candidate: RawSearchResult): number {
-  let score = 0.45;
+  let score = 0.5;
   const signals = new Set(candidate.credibilitySignals ?? []);
-  if (signals.has("HTTPS")) score += 0.08;
-  if (signals.has("institutional-domain") || signals.has("government-domain")) score += 0.16;
-  if (signals.has("scholarly-index")) score += 0.22;
-  if (signals.has("DOI")) score += 0.08;
-  if (candidate.type === "paper" && candidate.provider) score += 0.05;
-  if (candidate.citationCount) score += Math.min(0.12, Math.log10(candidate.citationCount + 1) * 0.035);
+  if (signals.has("HTTPS")) score += 0.06;
+  if (signals.has("institutional-domain") || signals.has("government-domain")) score += 0.12;
+  if (signals.has("scholarly-index")) score += 0.1;
+  if (signals.has("DOI")) score += 0.04;
+  if (candidate.citationCount) score += Math.min(0.06, Math.log10(candidate.citationCount + 1) * 0.02);
   if ((candidate.snippet ?? "").length >= 80) score += 0.04;
   return Math.min(1, score);
 }
@@ -1586,42 +1591,39 @@ function credibilityScore(candidate: RawSearchResult): number {
 function audienceFitScore(candidate: RawSearchResult, node: ConceptNode, profile?: LearnerProfile): number {
   const education = (profile?.educationLevel ?? "high-school").toLowerCase();
   const knowledge = profile?.knowledgeLevel ?? "beginner";
-  const purpose = profile?.purpose ?? "general-learning";
   const introductory = ["elementary", "middle-school", "high-school"].includes(education)
     || ["novice", "beginner"].includes(knowledge);
-  const advanced = ["graduate", "professional"].includes(education)
-    || ["advanced", "expert"].includes(knowledge)
-    || node.difficulty >= 4;
 
-  let score = 0.62;
+  let score = 0.68;
   if (introductory) {
-    if (["course", "video", "article"].includes(candidate.type)) score += 0.2;
-    if (candidate.type === "paper") score -= purpose === "research" ? 0.05 : 0.32;
-    if (candidate.type === "documentation" && purpose !== "project") score -= 0.08;
+    if (["course", "video", "article"].includes(candidate.type)) score += 0.16;
+    if (candidate.type === "documentation") score -= 0.08;
+    if (candidate.type === "paper") score -= 0.22;
+  } else if (["advanced", "expert"].includes(knowledge)) {
+    if (["documentation", "reference"].includes(candidate.type)) score += 0.1;
   }
-  if (advanced) {
-    if (["paper", "documentation", "reference"].includes(candidate.type)) score += 0.18;
-  }
-  if (purpose === "project" && candidate.type === "documentation") score += 0.2;
-  if (purpose === "research" && candidate.type === "paper") score += 0.25;
 
   const preferences = (profile?.preferredResourceTypes ?? []).join(" ").toLowerCase();
-  if (preferences && preferences.includes(candidate.type)) score += 0.12;
+  if (preferences && preferences.includes(candidate.type)) score += 0.14;
+  if (node.difficulty <= 2 && candidate.type === "paper") score -= 0.18;
   return Math.max(0, Math.min(1, score));
 }
 
 function deterministicResourceSelection(
   candidates: ResourceCandidate[],
   node: ConceptNode,
-  profile?: LearnerProfile,
+  profile: LearnerProfile | undefined,
+  strategy: ResourceStrategy,
 ): ResourceCandidate[] {
   const ranked = candidates
+    .filter((candidate) => candidate.type !== "paper" || strategy.maxPapers > 0)
     .map((candidate) => ({
       candidate,
       base:
-        relevanceScore(candidate, node) * 0.5
-        + credibilityScore(candidate) * 0.28
-        + audienceFitScore(candidate, node, profile) * 0.22,
+        relevanceScore(candidate, node) * 0.42
+        + resourceTypeFit(candidate.type, strategy) * 0.28
+        + credibilityScore(candidate) * 0.18
+        + audienceFitScore(candidate, node, profile) * 0.12,
     }))
     .sort((a, b) => b.base - a.base);
 
@@ -1629,18 +1631,20 @@ function deterministicResourceSelection(
   const hostCounts = new Map<string, number>();
   const typeCounts = new Map<string, number>();
   const providerCounts = new Map<string, number>();
+  let paperCount = 0;
 
   while (selected.length < 5 && ranked.length) {
-    let bestIndex = 0;
+    let bestIndex = -1;
     let bestScore = Number.NEGATIVE_INFINITY;
     for (let index = 0; index < ranked.length; index += 1) {
       const item = ranked[index];
+      if (item.candidate.type === "paper" && paperCount >= strategy.maxPapers) continue;
       const host = resourceHost(item.candidate.url);
       const hostPenalty = (hostCounts.get(host) ?? 0) * 0.18;
-      const typePenalty = (typeCounts.get(item.candidate.type) ?? 0) * 0.05;
+      const typePenalty = (typeCounts.get(item.candidate.type) ?? 0) * 0.08;
       const provider = item.candidate.provider ?? item.candidate.source;
       const providerPenalty = (providerCounts.get(provider) ?? 0) * 0.04;
-      const diversityBonus = (hostCounts.has(host) ? 0 : 0.08) + (typeCounts.has(item.candidate.type) ? 0 : 0.04);
+      const diversityBonus = (hostCounts.has(host) ? 0 : 0.08) + (typeCounts.has(item.candidate.type) ? 0 : 0.05);
       const score = item.base + diversityBonus - hostPenalty - typePenalty - providerPenalty;
       if (score > bestScore) {
         bestIndex = index;
@@ -1648,9 +1652,11 @@ function deterministicResourceSelection(
       }
     }
 
+    if (bestIndex < 0) break;
     const [{ candidate }] = ranked.splice(bestIndex, 1);
     if (selected.length && bestScore < 0.32) break;
     selected.push(candidate);
+    if (candidate.type === "paper") paperCount += 1;
     const host = resourceHost(candidate.url);
     hostCounts.set(host, (hostCounts.get(host) ?? 0) + 1);
     typeCounts.set(candidate.type, (typeCounts.get(candidate.type) ?? 0) + 1);
@@ -1659,6 +1665,26 @@ function deterministicResourceSelection(
   }
 
   return selected;
+}
+
+function enforceResourceMix(
+  preferred: ResourceCandidate[],
+  fallback: ResourceCandidate[],
+  strategy: ResourceStrategy,
+): ResourceCandidate[] {
+  const result: ResourceCandidate[] = [];
+  const seen = new Set<string>();
+  let papers = 0;
+  for (const candidate of [...preferred, ...fallback]) {
+    if (seen.has(candidate.candidateId)) continue;
+    if (candidate.type === "paper" && papers >= strategy.maxPapers) continue;
+    if (candidate.type === "paper" && strategy.maxPapers === 0) continue;
+    result.push(candidate);
+    seen.add(candidate.candidateId);
+    if (candidate.type === "paper") papers += 1;
+    if (result.length >= 5) break;
+  }
+  return result;
 }
 
 export async function findResources(input: {
@@ -1683,11 +1709,18 @@ export async function findResources(input: {
     },
   });
 
-  const plan = deterministicResourcePlan(input.node, webSearchAvailable, input.learnerProfile);
-  trace.add("agent_start", "Resource Agent created a source-neutral retrieval plan from the node and learner context.", {
+  const strategy = buildResourceStrategy(input.node, input.learnerProfile);
+  const plan = deterministicResourcePlan(input.node, webSearchAvailable, input.learnerProfile, strategy);
+  trace.add("agent_start", "Resource Agent created a source-neutral, format-adaptive retrieval plan from the node and learner context.", {
     agent: "resource_agent",
-    metadata: { queries: plan.queries.map((query) => ({ source: query.source, reason: query.reason })) },
+    metadata: {
+      strategy: { intent: strategy.intent, targetTypes: strategy.targetTypes, maxPapers: strategy.maxPapers, rationale: strategy.rationale },
+      queries: plan.queries.map((query) => ({ source: query.source, reason: query.reason })),
+    },
   });
+  if (!plan.queries.length) {
+    warnings.push("No configured retrieval provider matched this node's resource strategy; academic papers were not used as a generic fallback.");
+  }
 
   const rawCandidates: RawSearchResult[] = [];
   for (const query of plan.queries.slice(0, 4)) {
@@ -1709,8 +1742,16 @@ export async function findResources(input: {
   }
 
   const seenUrls = new Set<string>();
+  let paperCandidates = 0;
+  const paperCandidateLimit = Math.max(strategy.maxPapers * 3, strategy.maxPapers ? 3 : 0);
   const candidates: ResourceCandidate[] = rawCandidates
     .filter(safeCandidateUrl)
+    .filter((candidate) => {
+      if (candidate.type !== "paper") return true;
+      if (strategy.maxPapers === 0 || paperCandidates >= paperCandidateLimit) return false;
+      paperCandidates += 1;
+      return true;
+    })
     .filter((candidate) => {
       const key = candidate.url.replace(/\/$/, "").toLowerCase();
       if (seenUrls.has(key)) return false;
@@ -1720,15 +1761,16 @@ export async function findResources(input: {
     .slice(0, 30)
     .map((candidate, index) => ({ ...candidate, candidateId: `candidate-${index + 1}` }));
 
-  let selected = deterministicResourceSelection(candidates, input.node, input.learnerProfile);
-  let selectionSummary = "Selected with deterministic relevance, credibility, learner-fit, difficulty-fit, and diversity scoring.";
+  const deterministicSelected = deterministicResourceSelection(candidates, input.node, input.learnerProfile, strategy);
+  let selected = deterministicSelected;
+  let selectionSummary = `Adaptive strategy: ${strategy.rationale} Selected with exact relevance, resource-type fit, credibility, learner fit, and diversity scoring.`;
 
   if (env.RESOURCE_PLANNING_MODE === "llm" && candidates.length) {
     try {
       const selection = (
         await runtime.run<any, ResourceSelection>(
           "resource_agent",
-          { node: input.node, learnerProfile: input.learnerProfile, candidates },
+          { node: input.node, learnerProfile: input.learnerProfile, candidates, strategy },
           trace,
         )
       ).data;
@@ -1739,8 +1781,8 @@ export async function findResources(input: {
         .filter((candidate): candidate is ResourceCandidate => Boolean(candidate))
         .slice(0, 5);
       if (llmSelected.length) {
-        selected = llmSelected;
-        selectionSummary = selection.summary;
+        selected = enforceResourceMix(llmSelected, deterministicSelected, strategy);
+        selectionSummary = `${selection.summary} Adaptive strategy enforced: ${strategy.rationale}`;
       } else {
         warnings.push("Resource Agent returned no valid candidate IDs, so deterministic selection was used.");
       }
@@ -1768,6 +1810,10 @@ export async function findResources(input: {
       selectedCandidateIds: selected.map((candidate) => candidate.candidateId),
       distinctHosts: new Set(selected.map((candidate) => resourceHost(candidate.url))).size,
       selectionMode: env.RESOURCE_PLANNING_MODE === "llm" ? "llm-with-deterministic-fallback" : "deterministic",
+      resourceIntent: strategy.intent,
+      targetTypes: strategy.targetTypes,
+      maxPapers: strategy.maxPapers,
+      selectedTypes: selected.map((candidate) => candidate.type),
     },
   });
 
