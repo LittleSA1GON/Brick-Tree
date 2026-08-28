@@ -29,7 +29,7 @@ export async function GET() {
   return Response.json({
     ok: true,
     app: "Brick Tree",
-    version: "0.8.0",
+    version: "0.9.0",
     runtime: "vercel-stateless",
     persistentStorage: false,
     llmProvider: env.LLM_PROVIDER,
@@ -42,9 +42,14 @@ export async function GET() {
       deterministicPedagogyValidation: env.PEDAGOGY_VALIDATION_MODE === "deterministic",
     },
     resources: {
-      institutionalCatalog: true,
-      crossref: true,
-      tavily: Boolean(env.TAVILY_API_KEY),
+      webSearchConfigured: Boolean(env.TAVILY_API_KEY || env.BRAVE_SEARCH_API_KEY),
+      providers: {
+        tavily: Boolean(env.TAVILY_API_KEY),
+        brave: Boolean(env.BRAVE_SEARCH_API_KEY),
+        openAlex: true,
+        crossref: true,
+        semanticScholar: Boolean(env.SEMANTIC_SCHOLAR_API_KEY),
+      },
     },
     ragConfigured: Boolean(env.LOCAL_RAG_BASE_URL),
     agents: publicAgentList(),

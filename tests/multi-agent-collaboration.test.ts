@@ -4,7 +4,14 @@ import path from "node:path";
 import { createAgentRegistry } from "@/lib/agents";
 
 const root = process.cwd();
-const orchestrator = fs.readFileSync(path.join(root, "lib/agents/orchestrator.ts"), "utf8");
+const orchestrator = [
+  "lib/agents/workflow-core.ts",
+  "lib/agents/tree-workflow.ts",
+  "lib/agents/brick-workflow.ts",
+  "lib/agents/branch-workflow.ts",
+  "lib/agents/resource-workflow.ts",
+  "lib/agents/explanation-workflow.ts",
+].map((file) => fs.readFileSync(path.join(root, file), "utf8")).join("\n");
 
 describe("Brick Tree multi-agent collaboration graph", () => {
   it("registers the four collaborating roles with explicit authorized handoffs", () => {

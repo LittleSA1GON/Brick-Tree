@@ -5,7 +5,14 @@ import path from "node:path";
 const root = process.cwd();
 const read = (file: string) => fs.readFileSync(path.join(root, file), "utf8");
 
-const orchestrator = read("lib/agents/orchestrator.ts");
+const orchestrator = [
+  "lib/agents/workflow-core.ts",
+  "lib/agents/tree-workflow.ts",
+  "lib/agents/brick-workflow.ts",
+  "lib/agents/branch-workflow.ts",
+  "lib/agents/resource-workflow.ts",
+  "lib/agents/explanation-workflow.ts",
+].map(read).join("\n");
 const resourceAgent = read("lib/agents/resource-agent.ts");
 const resourceStrategy = read("lib/agents/resource-strategy.ts");
 const resources = read("lib/schemas/resources.ts");

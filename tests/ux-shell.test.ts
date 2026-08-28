@@ -3,13 +3,23 @@ import fs from "node:fs";
 import path from "node:path";
 
 const root = process.cwd();
-const appSource = fs.readFileSync(path.join(root, "components/BrickTreeApp.tsx"), "utf8");
+const appSource = [
+  "components/BrickTreeApp.tsx",
+  "components/brick-tree/model.ts",
+  "components/brick-tree/shell.tsx",
+  "components/brick-tree/setup.tsx",
+  "components/brick-tree/hierarchy.tsx",
+  "components/brick-tree/node-detail.tsx",
+  "components/brick-tree/navigation.tsx",
+  "components/brick-tree/MiniGraphMap.tsx",
+  "components/brick-tree/useResourceHydration.ts",
+].map((file) => fs.readFileSync(path.join(root, file), "utf8")).join("\n");
 const appStyles = fs.readFileSync(path.join(root, "components/BrickTreeApp.module.css"), "utf8");
 const globalsSource = fs.readFileSync(path.join(root, "app/globals.css"), "utf8");
 const layoutSource = fs.readFileSync(path.join(root, "app/layout.tsx"), "utf8");
 const pathAgent = fs.readFileSync(path.join(root, "lib/agents/learning-path.ts"), "utf8");
 
-describe("Brick Tree 0.8 interaction shell", () => {
+describe("Brick Tree interaction shell", () => {
   it("keeps the landing page concise and clearly separates Tree from Brick", () => {
     expect(appSource).toContain("Cut down complex ideas");
     expect(appSource).toContain("build up new ones");

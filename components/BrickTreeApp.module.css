@@ -838,7 +838,7 @@
   .scrollCanvas { scroll-behavior: auto; }
 }
 
-/* 0.8 hierarchy workspace: click-to-focus, no draggable/pannable canvas. */
+/* Click-to-focus hierarchy workspace. */
 .hierarchyViewport {
   position: absolute;
   inset: 92px 82px 22px 82px;
@@ -1388,7 +1388,7 @@
   }
 }
 
-/* 0.8.1 graph navigation: one parent-aware layout drives the workspace and both maps. */
+/* Shared parent-aware graph layout. */
 .hierarchyViewport {
   inset: 88px 300px 18px 70px;
   display: block;
@@ -1669,7 +1669,7 @@
 @media (max-width: 1000px) { .hierarchyViewport { inset: 84px 18px 170px 58px; } }
 @media (max-width: 640px) { .hierarchyViewport { inset: 76px 8px 145px 8px; } }
 
-/* 0.8.2 two-axis graph navigation: vertical wheel/scroll + horizontal swipe/scroll. */
+/* Two-axis graph navigation. */
 .hierarchyViewport {
   min-width: 0;
   min-height: 0;
@@ -1699,7 +1699,7 @@
   min-height: 100%;
 }
 
-/* 0.8.3 buffered hierarchy viewport.
+/* Buffered hierarchy viewport.
    Tree is anchored to the top of its scrollable world.
    Brick is anchored to the bottom so Height 0 foundations begin below higher layers.
    The hierarchy layout itself supplies generous x/y padding, which creates real scrollable
@@ -1742,7 +1742,7 @@
   }
 }
 
-/* 0.8.4 adaptive viewport system.
+/* Adaptive viewport system.
    Final overrides intentionally live at the end of the module so every major UI surface
    responds to width, height, resolution and aspect ratio without changing graph semantics. */
 .landing,
@@ -2101,7 +2101,7 @@
   .persistentMap { width: 260px; height: 176px; }
 }
 
-/* 0.8.5 responsive graph zoom. The graph geometry already adapts to the viewport;
+/* Responsive graph zoom. The graph geometry already adapts to the viewport;
    these controls let the learner further scale the complete node/edge plane without
    changing semantic positions or clipping the scrollable canvas. */
 .zoomControls {
@@ -2174,7 +2174,7 @@
   }
 }
 
-/* 0.8.6 responsive setup node.
+/* Responsive setup node.
    The starting Tree/Brick prompt scales as a complete component with the viewport,
    rather than keeping a fixed desktop-sized card while only its text changes. */
 .setupSection {
@@ -2340,7 +2340,7 @@
   }
 }
 
-/* 0.8.8 unified starting-node position and viewport fit.
+/* Unified starting-node position and viewport fit.
    Tree and Brick begin at the same visual level. The setup surface uses the
    available hierarchy viewport rather than 100dvh, so its complete outer card
    always remains visible while its contents can scroll internally when a very
@@ -2360,7 +2360,7 @@
   overflow: hidden;
 }
 
-/* setupTop/setupBottom are retained for compatibility with older saved CSS
+/* Start variants share the same layout
    references, but both resolve to the same level now. */
 .setupTop,
 .setupBottom {
