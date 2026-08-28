@@ -9,7 +9,7 @@ export function Landing({ onBegin }: { onBegin: (mode: PrimaryMode) => void }) {
   return (
     <main className={styles.landing}>
       <div className={styles.landingBackdrop} aria-hidden="true" />
-      <div className={styles.landingBrand}><BrandIcon /><span>Brick Tree</span></div>
+      <div className={styles.landingBrand}><BrandIcon /><span>Brick Tree <small>by Ethan Vu</small></span></div>
       <section className={styles.landingCopy}>
         <p className={styles.kicker}>One map. Two directions.</p>
         <h1>
